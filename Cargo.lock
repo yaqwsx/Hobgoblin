@@ -149,6 +149,7 @@ dependencies = [
  "hobgoblin-gear",
  "hobgoblin-post",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use hobgoblin_core::{PlanningPurpose, Project, SpurGear, StackItemKind};
+use hobgoblin_core::{HeldSide, PlanningPurpose, PlanningRegion, Project, SpurGear, StackItemKind};
 use hobgoblin_gear::{
     conjugate_stock_rotation_rad, derive_spur_dimensions, plan_adaptive_rack_steps,
     AdaptiveRackSteppingConfig, AdaptiveRackSteppingError, AdaptiveRackSteppingPlan,
@@ -32,6 +32,7 @@ pub struct OperationDependency {
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
     CylindricalEnvelopeRough,
+    PlanningRegionFinish,
     CylindricalFinishSurface,
     GearOdSurface,
     GearRootGenerate,
@@ -125,14 +126,24 @@ impl From<AdaptiveRackSteppingError> for SpurShapingError {
 pub fn build_initial_operation_graph(project: &Project) -> OperationGraph {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
+    let mut feature_order = Vec::new();
 
     for region in &project.planning_regions {
-        if matches!(region.purpose, PlanningPurpose::Roughing) {
+        let kind = match region.purpose {
+            PlanningPurpose::Roughing => Some(OperationKind::CylindricalEnvelopeRough),
+            PlanningPurpose::Finishing => Some(OperationKind::PlanningRegionFinish),
+            PlanningPurpose::Protection | PlanningPurpose::Support => None,
+        };
+        if let Some(kind) = kind {
             nodes.push(OperationNode {
-                id: format!("op.region.{}.rough", region.id),
+                id: format!(
+                    "op.region.{}.{}",
+                    region.id,
+                    region.purpose.operation_suffix()
+                ),
                 feature_id: None,
                 region_id: Some(region.id.clone()),
-                kind: OperationKind::CylindricalEnvelopeRough,
+                kind,
                 stage: region.stage,
             });
         }
@@ -141,12 +152,18 @@ pub fn build_initial_operation_graph(project: &Project) -> OperationGraph {
     for item in &project.stack {
         match &item.kind {
             StackItemKind::CylindricalSection { .. } => {
+                let finish = format!("op.feature.{}.finish", item.id);
                 nodes.push(OperationNode {
-                    id: format!("op.feature.{}.finish", item.id),
+                    id: finish.clone(),
                     feature_id: Some(item.id.clone()),
                     region_id: None,
                     kind: OperationKind::CylindricalFinishSurface,
                     stage: 100,
+                });
+                feature_order.push(FeatureOperationSpan {
+                    feature_id: item.id.clone(),
+                    first_operation_id: finish.clone(),
+                    last_operation_id: finish,
                 });
             }
             StackItemKind::SpurGear { .. } => {
@@ -217,22 +234,145 @@ pub fn build_initial_operation_graph(project: &Project) -> OperationGraph {
                     },
                     OperationDependency {
                         before: right,
-                        after: spring,
+                        after: spring.clone(),
                         reason: "right flank finishing precedes spring pass".to_string(),
                     },
                 ]);
+                feature_order.push(FeatureOperationSpan {
+                    feature_id: item.id.clone(),
+                    first_operation_id: od,
+                    last_operation_id: spring,
+                });
             }
-            _ => nodes.push(OperationNode {
-                id: format!("op.feature.{}.unsupported", item.id),
-                feature_id: Some(item.id.clone()),
-                region_id: None,
-                kind: OperationKind::UnsupportedFeature,
-                stage: 100,
-            }),
+            _ => {
+                let unsupported = format!("op.feature.{}.unsupported", item.id);
+                nodes.push(OperationNode {
+                    id: unsupported.clone(),
+                    feature_id: Some(item.id.clone()),
+                    region_id: None,
+                    kind: OperationKind::UnsupportedFeature,
+                    stage: 100,
+                });
+                feature_order.push(FeatureOperationSpan {
+                    feature_id: item.id.clone(),
+                    first_operation_id: unsupported.clone(),
+                    last_operation_id: unsupported,
+                });
+            }
+        }
+    }
+
+    let ordered_features =
+        ordered_feature_spans(&feature_order, &project.setup.workholding.held_side);
+    for window in ordered_features.windows(2) {
+        let before = &window[0];
+        let after = &window[1];
+        push_dependency(
+            &mut edges,
+            before.last_operation_id.clone(),
+            after.first_operation_id.clone(),
+            format!(
+                "feature '{}' precedes '{}' in shaft stack order",
+                before.feature_id, after.feature_id
+            ),
+        );
+    }
+
+    let node_snapshot = nodes.clone();
+    for before in &node_snapshot {
+        let Some(region_id) = &before.region_id else {
+            continue;
+        };
+        let Some(region) = project
+            .planning_regions
+            .iter()
+            .find(|region| region.id == *region_id)
+        else {
+            continue;
+        };
+        for after in &node_snapshot {
+            if before.stage < after.stage && region_applies_to_node(region, after) {
+                push_dependency(
+                    &mut edges,
+                    before.id.clone(),
+                    after.id.clone(),
+                    format!(
+                        "stage {} must complete before stage {}",
+                        before.stage, after.stage
+                    ),
+                );
+            }
         }
     }
 
     OperationGraph { nodes, edges }
+}
+
+fn ordered_feature_spans<'a>(
+    feature_order: &'a [FeatureOperationSpan],
+    held_side: &HeldSide,
+) -> Vec<&'a FeatureOperationSpan> {
+    let mut ordered = feature_order.iter().collect::<Vec<_>>();
+    if matches!(held_side, HeldSide::Left) {
+        ordered.reverse();
+    }
+    ordered
+}
+
+fn region_applies_to_node(region: &PlanningRegion, node: &OperationNode) -> bool {
+    match &node.feature_id {
+        Some(feature_id) => {
+            region.allowed_feature_ids.is_empty()
+                || region
+                    .allowed_feature_ids
+                    .iter()
+                    .any(|allowed| allowed == feature_id)
+        }
+        None => true,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FeatureOperationSpan {
+    feature_id: String,
+    first_operation_id: String,
+    last_operation_id: String,
+}
+
+fn push_dependency(
+    edges: &mut Vec<OperationDependency>,
+    before: String,
+    after: String,
+    reason: String,
+) {
+    if before == after
+        || edges
+            .iter()
+            .any(|edge| edge.before == before && edge.after == after)
+    {
+        return;
+    }
+
+    edges.push(OperationDependency {
+        before,
+        after,
+        reason,
+    });
+}
+
+trait PlanningPurposeOperationSuffix {
+    fn operation_suffix(&self) -> &'static str;
+}
+
+impl PlanningPurposeOperationSuffix for PlanningPurpose {
+    fn operation_suffix(&self) -> &'static str {
+        match self {
+            PlanningPurpose::Roughing => "rough",
+            PlanningPurpose::Finishing => "finish",
+            PlanningPurpose::Protection => "protect",
+            PlanningPurpose::Support => "support",
+        }
+    }
 }
 
 pub fn generate_spur_shaping_path(
@@ -429,6 +569,102 @@ mod tests {
             phase_deg: 0.0,
             machining: GearMachining::default(),
         }
+    }
+
+    fn has_edge(graph: &OperationGraph, before: &str, after: &str) -> bool {
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.before == before && edge.after == after)
+    }
+
+    fn is_acyclic(graph: &OperationGraph) -> bool {
+        let mut remaining_edges = graph.edges.clone();
+        let mut ready = graph
+            .nodes
+            .iter()
+            .filter(|node| !remaining_edges.iter().any(|edge| edge.after == node.id))
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        let mut visited = 0_usize;
+
+        while let Some(node_id) = ready.pop() {
+            visited += 1;
+            let outgoing = remaining_edges
+                .iter()
+                .filter(|edge| edge.before == node_id)
+                .map(|edge| edge.after.clone())
+                .collect::<Vec<_>>();
+            remaining_edges.retain(|edge| edge.before != node_id);
+            for candidate in outgoing {
+                if !remaining_edges.iter().any(|edge| edge.after == candidate) {
+                    ready.push(candidate);
+                }
+            }
+        }
+
+        visited == graph.nodes.len()
+    }
+
+    #[test]
+    fn builds_operation_graph_from_sample_project() {
+        let project: Project = serde_json::from_str(include_str!(
+            "../../../examples/projects/simple_spur_stack.hobgoblin.json"
+        ))
+        .expect("sample project parses");
+
+        let graph = build_initial_operation_graph(&project);
+
+        assert_eq!(graph.nodes.len(), 9);
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.id == "op.region.region.initial_rough.rough"));
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.id == "op.region.region.gear_finish.finish"));
+        assert!(has_edge(
+            &graph,
+            "op.feature.feature.spur_20t.od",
+            "op.feature.feature.spur_20t.root"
+        ));
+        assert!(has_edge(
+            &graph,
+            "op.feature.feature.spur_20t.root",
+            "op.feature.feature.spur_20t.left_flank"
+        ));
+        assert!(has_edge(
+            &graph,
+            "op.feature.feature.right_journal.finish",
+            "op.feature.feature.spur_20t.od"
+        ));
+        assert!(has_edge(
+            &graph,
+            "op.feature.feature.spur_20t.spring",
+            "op.feature.feature.left_journal.finish"
+        ));
+        assert!(has_edge(
+            &graph,
+            "op.region.region.initial_rough.rough",
+            "op.feature.feature.left_journal.finish"
+        ));
+        assert!(has_edge(
+            &graph,
+            "op.region.region.initial_rough.rough",
+            "op.feature.feature.spur_20t.spring"
+        ));
+        assert!(has_edge(
+            &graph,
+            "op.region.region.gear_finish.finish",
+            "op.feature.feature.spur_20t.root"
+        ));
+        assert!(!has_edge(
+            &graph,
+            "op.feature.feature.right_journal.finish",
+            "op.feature.feature.spur_20t.root"
+        ));
+        assert!(is_acyclic(&graph));
     }
 
     #[test]
