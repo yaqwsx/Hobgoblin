@@ -88,6 +88,21 @@ jobs:
             --material examples/library/brass.material.json \
             | jq -e '{errors: [.diagnostics[] | select(.severity == "error")] | length, rapid_segments: .summary.rapid_segment_count, cut_segments: .summary.cut_segment_count} | select(.errors == 0)'
 
+      - name: Export sample Carvera Air G-code
+        run: |
+          cargo run --locked -p hobgoblin-cli -- export-gcode \
+            examples/projects/simple_spur_stack.hobgoblin.json \
+            feature.spur_20t \
+            examples/exports/simple_spur_stack.nc \
+            --report examples/exports/simple_spur_stack.export.json \
+            --stepping adaptive \
+            --quality draft \
+            --depth-layers 0.25 \
+            --machine examples/library/carvera_air.machine.json \
+            --tools examples/library/basic_tools.tools.json \
+            --material examples/library/brass.material.json
+          git diff --exit-code -- examples/exports/simple_spur_stack.nc examples/exports/simple_spur_stack.export.json
+
   json:
     name: JSON examples
     runs-on: ubuntu-latest
@@ -110,6 +125,7 @@ jobs:
             "examples/library/carvera_air.machine.json",
             "examples/library/basic_tools.tools.json",
             "examples/library/brass.material.json",
+            "examples/exports/simple_spur_stack.export.json",
           ];
           for (const file of files) {
             JSON.parse(fs.readFileSync(file, "utf8"));

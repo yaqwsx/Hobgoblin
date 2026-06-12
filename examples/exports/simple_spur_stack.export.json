@@ -1,0 +1,25 @@
+{
+  "project_id": "project.simple_spur_stack",
+  "project_hash_sha256": "1c7ee7b97effd6133b15f5f87039f03ccbed351dee7e3a95e3819a2b59a2e24d",
+  "machine_profile_id": "machine.carvera_air.default",
+  "gcode_path": "examples/exports/simple_spur_stack.nc",
+  "tool_ids": [
+    "tool.v.60deg.3mm_flat"
+  ],
+  "operations": [
+    {
+      "operation_id": "op.feature.spur_20t.debug_spur_path",
+      "path_id": "path.feature.spur_20t.generated_shaping",
+      "feature_id": "feature.spur_20t",
+      "move_count": 326
+    }
+  ],
+  "simulation": {
+    "path_id": "path.feature.spur_20t.generated_shaping",
+    "has_errors": false,
+    "diagnostic_count": 0,
+    "rapid_segment_count": 243,
+    "cut_segment_count": 81,
+    "max_cut_depth_mm": 0.25
+  }
+}

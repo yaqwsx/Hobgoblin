@@ -6,5 +6,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hobgoblin-core = { path = "../hobgoblin-core" }
 serde.workspace = true
-
+thiserror.workspace = true

@@ -8,10 +8,12 @@ use hobgoblin_gear::{derive_spur_dimensions, AdaptiveRackSteppingConfig, RackSte
 use hobgoblin_planner::{
     build_initial_operation_graph, generate_spur_shaping_path, SpurShapingConfig, SpurShapingPath,
 };
+use hobgoblin_post::{postprocess_path, AbstractMove, PostprocessRequest};
 use hobgoblin_sim::simulate_abstract_path_with_tool;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 #[command(name = "hobgoblin")]
@@ -56,6 +58,31 @@ enum Command {
     SimulateSpurPath {
         project: PathBuf,
         feature_id: String,
+        #[arg(long, default_value_t = 5, help = "Fixed-mode rack samples per tooth")]
+        rack_steps_per_tooth: u32,
+        #[arg(long, value_enum, default_value_t = RackSteppingMode::Adaptive)]
+        stepping: RackSteppingMode,
+        #[arg(long, value_enum, default_value_t = CliRackSteppingQuality::Standard)]
+        quality: CliRackSteppingQuality,
+        #[arg(long)]
+        tolerance_mm: Option<f64>,
+        #[arg(long)]
+        min_step_mm: Option<f64>,
+        #[arg(long)]
+        max_step_mm: Option<f64>,
+        #[arg(long, value_delimiter = ',', default_value = "0.25,0.5,0.75,1.0")]
+        depth_layers: Vec<f64>,
+        #[command(flatten)]
+        libraries: LibraryArgs,
+    },
+    ExportGcode {
+        project: PathBuf,
+        feature_id: String,
+        output: PathBuf,
+        #[arg(long)]
+        report: Option<PathBuf>,
+        #[arg(long, default_value_t = 12_000)]
+        spindle_rpm: u32,
         #[arg(long, default_value_t = 5, help = "Fixed-mode rack samples per tooth")]
         rack_steps_per_tooth: u32,
         #[arg(long, value_enum, default_value_t = RackSteppingMode::Adaptive)]
@@ -163,14 +190,65 @@ fn main() -> Result<()> {
             },
             libraries,
         ),
+        Command::ExportGcode {
+            project,
+            feature_id,
+            output,
+            report,
+            spindle_rpm,
+            rack_steps_per_tooth,
+            stepping,
+            quality,
+            tolerance_mm,
+            min_step_mm,
+            max_step_mm,
+            depth_layers,
+            libraries,
+        } => export_gcode(
+            project,
+            feature_id,
+            output,
+            report,
+            spindle_rpm,
+            DebugSpurPathOptions {
+                rack_steps_per_tooth,
+                stepping,
+                quality,
+                tolerance_mm,
+                min_step_mm,
+                max_step_mm,
+                depth_layers,
+            },
+            libraries,
+        ),
     }
 }
 
+fn read_project_source(path: &PathBuf) -> Result<String> {
+    fs::read_to_string(path)
+        .with_context(|| format!("failed to read project file '{}'", path.display()))
+}
+
 fn read_project(path: PathBuf) -> Result<Project> {
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read project file '{}'", path.display()))?;
-    serde_json::from_str(&content)
+    let content = read_project_source(&path)?;
+    parse_project_source(&content, &path)
+}
+
+fn parse_project_source(content: &str, path: &Path) -> Result<Project> {
+    serde_json::from_str(content)
         .with_context(|| format!("failed to parse project file '{}'", path.display()))
+}
+
+fn project_source_hash(content: &str) -> String {
+    let digest = Sha256::digest(content.as_bytes());
+    format!("{digest:x}")
+}
+
+fn read_project_with_hash(path: &PathBuf) -> Result<(Project, String)> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read project file '{}'", path.display()))?;
+    let project = parse_project_source(&content, path)?;
+    Ok((project, project_source_hash(&content)))
 }
 
 fn read_json_file<T: serde::de::DeserializeOwned>(path: &PathBuf, label: &str) -> Result<T> {
@@ -318,6 +396,82 @@ fn simulate_spur_path(
     Ok(())
 }
 
+fn export_gcode(
+    path: PathBuf,
+    feature_id: String,
+    output: PathBuf,
+    report: Option<PathBuf>,
+    spindle_rpm: u32,
+    options: DebugSpurPathOptions,
+    libraries: LibraryArgs,
+) -> Result<()> {
+    let project_hash = read_project_with_hash(&path)?.1;
+    let generated = build_debug_spur_path(path, feature_id, options, libraries)?;
+    let machine_profile = generated
+        .machine_profile
+        .as_ref()
+        .context("project validation passed but selected machine profile was not loaded")?;
+    let mut export_path = generated.path.path.clone();
+    export_path.moves.insert(
+        0,
+        AbstractMove::Spindle {
+            rpm: spindle_rpm,
+            clockwise: true,
+        },
+    );
+    let simulation = simulate_abstract_path_with_tool(
+        &generated.project,
+        &export_path,
+        generated.selected_tool.as_ref(),
+    );
+    if simulation.has_errors() {
+        println!("{}", serde_json::to_string_pretty(&simulation)?);
+        anyhow::bail!("simulation reported errors; refusing to export G-code");
+    }
+
+    let program = postprocess_path(&PostprocessRequest {
+        machine_profile,
+        path: &export_path,
+        program_name: &generated.project.project.name,
+        tool_id: generated.selected_tool_id.as_deref(),
+        safe_z_mm: generated.config.safe_z_mm,
+    })?;
+    fs::write(&output, program.to_text())
+        .with_context(|| format!("failed to write G-code file '{}'", output.display()))?;
+
+    let report_path = report.unwrap_or_else(|| output.with_extension("export.json"));
+    let report = ExportReport {
+        project_id: &generated.project.project.id,
+        project_hash_sha256: &project_hash,
+        machine_profile_id: &machine_profile.id,
+        gcode_path: output.to_string_lossy().into_owned(),
+        tool_ids: generated.selected_tool_id.iter().collect(),
+        operations: vec![ExportedOperation {
+            operation_id: &export_path.operation_id,
+            path_id: &export_path.id,
+            feature_id: &generated.feature_id,
+            move_count: export_path.moves.len(),
+        }],
+        simulation: ExportSimulationReport {
+            path_id: &simulation.path_id,
+            has_errors: simulation.has_errors(),
+            diagnostic_count: simulation.diagnostics.len(),
+            rapid_segment_count: simulation.summary.rapid_segment_count,
+            cut_segment_count: simulation.summary.cut_segment_count,
+            max_cut_depth_mm: simulation.summary.max_cut_depth_mm,
+        },
+    };
+    fs::write(&report_path, serde_json::to_string_pretty(&report)?)
+        .with_context(|| format!("failed to write export report '{}'", report_path.display()))?;
+
+    println!(
+        "wrote G-code to '{}' and report to '{}'",
+        output.display(),
+        report_path.display()
+    );
+    Ok(())
+}
+
 #[derive(Debug)]
 struct DebugSpurPathOptions {
     rack_steps_per_tooth: u32,
@@ -350,6 +504,7 @@ fn build_adaptive_rack_stepping_config(
 
 struct GeneratedDebugSpurPath {
     project: Project,
+    machine_profile: Option<MachineProfile>,
     feature_id: String,
     machine_profile_id: Option<String>,
     shaft_axis: Option<String>,
@@ -443,14 +598,11 @@ fn build_debug_spur_path(
             rack_steps_per_tooth: options.rack_steps_per_tooth,
             adaptive_rack_stepping,
             depth_layers: options.depth_layers,
-            a_axis_sign: machine_profile
-                .map(|profile| profile.axis_mapping.rotary_sign)
-                .unwrap_or_else(|| SpurShapingConfig::default().a_axis_sign),
             ..SpurShapingConfig::default()
         };
         let dimensions = derive_spur_dimensions(&gear);
         let result = generate_spur_shaping_path(
-            format!("op.feature.{feature_id}.debug_spur_path"),
+            format!("op.{feature_id}.debug_spur_path"),
             &feature_id,
             &gear,
             start,
@@ -461,6 +613,7 @@ fn build_debug_spur_path(
 
         return Ok(GeneratedDebugSpurPath {
             project,
+            machine_profile: machine_profile.cloned(),
             feature_id,
             machine_profile_id: machine_profile.map(|profile| profile.id.clone()),
             shaft_axis: machine_profile.map(|profile| profile.axis_mapping.shaft_axis.clone()),
@@ -477,6 +630,35 @@ fn build_debug_spur_path(
     }
 
     anyhow::bail!("feature '{feature_id}' not found")
+}
+
+#[derive(Debug, Serialize)]
+struct ExportReport<'a> {
+    project_id: &'a str,
+    project_hash_sha256: &'a str,
+    machine_profile_id: &'a str,
+    gcode_path: String,
+    tool_ids: Vec<&'a String>,
+    operations: Vec<ExportedOperation<'a>>,
+    simulation: ExportSimulationReport<'a>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportedOperation<'a> {
+    operation_id: &'a str,
+    path_id: &'a str,
+    feature_id: &'a str,
+    move_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportSimulationReport<'a> {
+    path_id: &'a str,
+    has_errors: bool,
+    diagnostic_count: usize,
+    rapid_segment_count: usize,
+    cut_segment_count: usize,
+    max_cut_depth_mm: f64,
 }
 
 #[derive(Debug, Serialize)]

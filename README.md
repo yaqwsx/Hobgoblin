@@ -43,6 +43,17 @@ cargo run -p hobgoblin-cli -- simulate-spur-path \
   --machine examples/library/carvera_air.machine.json \
   --tools examples/library/basic_tools.tools.json \
   --material examples/library/brass.material.json
+cargo run -p hobgoblin-cli -- export-gcode \
+  examples/projects/simple_spur_stack.hobgoblin.json \
+  feature.spur_20t \
+  examples/exports/simple_spur_stack.nc \
+  --report examples/exports/simple_spur_stack.export.json \
+  --stepping adaptive \
+  --quality draft \
+  --depth-layers 0.25 \
+  --machine examples/library/carvera_air.machine.json \
+  --tools examples/library/basic_tools.tools.json \
+  --material examples/library/brass.material.json
 ```
 
 CI runs these checks on pushes to `main`, pull requests, and manual dispatch.

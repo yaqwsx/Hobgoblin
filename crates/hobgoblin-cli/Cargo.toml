@@ -19,3 +19,4 @@ hobgoblin-post = { path = "../hobgoblin-post" }
 hobgoblin-sim = { path = "../hobgoblin-sim" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
