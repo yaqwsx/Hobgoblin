@@ -193,13 +193,14 @@ try {
   await page.locator(".region-polygon").nth(1).click();
   await page.getByText("Axis-aligned rectangle").waitFor();
   const verticesBeforeAdd = await page.locator(".vertex-handle").count();
-  await page.locator(".edge-add-handle").nth(4).click();
+  await page.locator(".vertex-row").first().getByRole("button", { name: "Add" }).click();
   const verticesAfterAdd = await page.locator(".vertex-handle").count();
   assert(
     verticesAfterAdd === verticesBeforeAdd + 1,
     `expected vertex add to increase count from ${verticesBeforeAdd}, got ${verticesAfterAdd}`,
   );
-  await page.locator(".vertex-handle").nth(verticesAfterAdd - 1).dblclick();
+  await page.getByText("Polygon").waitFor();
+  await page.locator(".vertex-row").nth(1).getByRole("button", { name: "Delete" }).click();
   const verticesAfterDelete = await page.locator(".vertex-handle").count();
   assert(
     verticesAfterDelete === verticesBeforeAdd,

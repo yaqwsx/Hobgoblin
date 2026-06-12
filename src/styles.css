@@ -693,7 +693,7 @@ button {
 
 .vertex-row {
   display: grid;
-  grid-template-columns: 34px minmax(70px, 1fr) minmax(70px, 1fr) auto;
+  grid-template-columns: 34px minmax(70px, 1fr) minmax(70px, 1fr) auto auto;
   align-items: center;
   gap: 6px;
   padding: 6px;
@@ -701,6 +701,12 @@ button {
   border-radius: 6px;
   background: #ffffff;
   font-size: 12px;
+}
+
+.vertex-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .diagnostics-panel {

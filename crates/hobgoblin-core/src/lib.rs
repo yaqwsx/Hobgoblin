@@ -626,6 +626,12 @@ pub fn validate_project(project: &Project) -> ValidationReport {
                 ));
             }
         }
+        if polygon_self_intersects(&region.polygon) {
+            diagnostics.push(Diagnostic::error(
+                Some(region.id.clone()),
+                "planning region polygon must not self-intersect",
+            ));
+        }
         for feature_id in &region.allowed_feature_ids {
             if !interval_by_item.contains_key(feature_id.as_str()) {
                 diagnostics.push(Diagnostic::error(
@@ -1255,6 +1261,75 @@ fn validate_non_negative(
     }
 }
 
+fn polygon_self_intersects(points: &[PointSr]) -> bool {
+    if points.len() < 4 {
+        return false;
+    }
+    for first_index in 0..points.len() {
+        let first_start = &points[first_index];
+        let first_end = &points[(first_index + 1) % points.len()];
+        for second_index in (first_index + 1)..points.len() {
+            if polygon_edges_are_adjacent(first_index, second_index, points.len()) {
+                continue;
+            }
+            let second_start = &points[second_index];
+            let second_end = &points[(second_index + 1) % points.len()];
+            if segments_intersect(first_start, first_end, second_start, second_end) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn polygon_edges_are_adjacent(first_index: usize, second_index: usize, count: usize) -> bool {
+    first_index == second_index
+        || first_index.abs_diff(second_index) == 1
+        || (first_index == 0 && second_index == count - 1)
+}
+
+fn segments_intersect(a: &PointSr, b: &PointSr, c: &PointSr, d: &PointSr) -> bool {
+    let ab_c = orientation(a, b, c);
+    let ab_d = orientation(a, b, d);
+    let cd_a = orientation(c, d, a);
+    let cd_b = orientation(c, d, b);
+
+    if ab_c == 0 && point_on_segment(a, c, b) {
+        return true;
+    }
+    if ab_d == 0 && point_on_segment(a, d, b) {
+        return true;
+    }
+    if cd_a == 0 && point_on_segment(c, a, d) {
+        return true;
+    }
+    if cd_b == 0 && point_on_segment(c, b, d) {
+        return true;
+    }
+
+    ab_c != ab_d && cd_a != cd_b
+}
+
+fn orientation(a: &PointSr, b: &PointSr, c: &PointSr) -> i8 {
+    let cross = (b.s_mm - a.s_mm) * (c.r_mm - a.r_mm) - (b.r_mm - a.r_mm) * (c.s_mm - a.s_mm);
+    const EPSILON: f64 = 1e-9;
+    if cross.abs() <= EPSILON {
+        0
+    } else if cross > 0.0 {
+        1
+    } else {
+        -1
+    }
+}
+
+fn point_on_segment(a: &PointSr, point: &PointSr, b: &PointSr) -> bool {
+    const EPSILON: f64 = 1e-9;
+    point.s_mm >= a.s_mm.min(b.s_mm) - EPSILON
+        && point.s_mm <= a.s_mm.max(b.s_mm) + EPSILON
+        && point.r_mm >= a.r_mm.min(b.r_mm) - EPSILON
+        && point.r_mm <= a.r_mm.max(b.r_mm) + EPSILON
+}
+
 fn validate_fits_stock(
     diagnostics: &mut Vec<Diagnostic>,
     item_id: &str,
@@ -1417,6 +1492,38 @@ mod tests {
         assert!(messages
             .iter()
             .any(|message| message.contains("exceeds stock diameter")));
+    }
+
+    #[test]
+    fn rejects_self_intersecting_planning_regions() {
+        let mut project: Project = serde_json::from_str(include_str!(
+            "../../../examples/projects/simple_spur_stack.hobgoblin.json"
+        ))
+        .expect("sample project parses");
+        project.planning_regions[0].polygon = vec![
+            PointSr {
+                s_mm: 0.0,
+                r_mm: 8.0,
+            },
+            PointSr {
+                s_mm: 20.0,
+                r_mm: 4.0,
+            },
+            PointSr {
+                s_mm: 0.0,
+                r_mm: 4.0,
+            },
+            PointSr {
+                s_mm: 20.0,
+                r_mm: 8.0,
+            },
+        ];
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(report.has_errors());
+        assert!(messages.contains(&"planning region polygon must not self-intersect"));
     }
 
     #[test]

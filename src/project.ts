@@ -125,7 +125,108 @@ export function validateProjectInBrowser(source: string): ValidationResponse {
     }
   }
 
+  for (const region of project.planning_regions ?? []) {
+    if (region.polygon.length < 3) {
+      diagnostics.push({
+        severity: "error",
+        object_id: region.id,
+        message: "planning region polygon must contain at least three points",
+      });
+    }
+    for (const point of region.polygon) {
+      if (!Number.isFinite(point.s_mm) || !Number.isFinite(point.r_mm)) {
+        diagnostics.push({
+          severity: "error",
+          object_id: region.id,
+          message: "planning region polygon points must be finite",
+        });
+      }
+      if (point.r_mm < 0) {
+        diagnostics.push({
+          severity: "error",
+          object_id: region.id,
+          message: "planning region radius coordinates must be non-negative",
+        });
+      }
+    }
+    if (polygonSelfIntersects(region.polygon)) {
+      diagnostics.push({
+        severity: "error",
+        object_id: region.id,
+        message: "planning region polygon must not self-intersect",
+      });
+    }
+  }
+
   return { diagnostics, intervals };
+}
+
+function polygonSelfIntersects(points: PointSr[]): boolean {
+  if (points.length < 4) {
+    return false;
+  }
+  for (let startIndex = 0; startIndex < points.length; startIndex += 1) {
+    const startA = points[startIndex];
+    const endA = points[(startIndex + 1) % points.length];
+    for (let candidateIndex = startIndex + 1; candidateIndex < points.length; candidateIndex += 1) {
+      if (polygonEdgesAreAdjacent(startIndex, candidateIndex, points.length)) {
+        continue;
+      }
+      const startB = points[candidateIndex];
+      const endB = points[(candidateIndex + 1) % points.length];
+      if (segmentsIntersect(startA, endA, startB, endB)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function polygonEdgesAreAdjacent(firstIndex: number, secondIndex: number, count: number): boolean {
+  return (
+    firstIndex === secondIndex ||
+    Math.abs(firstIndex - secondIndex) === 1 ||
+    (firstIndex === 0 && secondIndex === count - 1)
+  );
+}
+
+function segmentsIntersect(a: PointSr, b: PointSr, c: PointSr, d: PointSr): boolean {
+  const abC = orientation(a, b, c);
+  const abD = orientation(a, b, d);
+  const cdA = orientation(c, d, a);
+  const cdB = orientation(c, d, b);
+  if (abC === 0 && pointOnSegment(a, c, b)) {
+    return true;
+  }
+  if (abD === 0 && pointOnSegment(a, d, b)) {
+    return true;
+  }
+  if (cdA === 0 && pointOnSegment(c, a, d)) {
+    return true;
+  }
+  if (cdB === 0 && pointOnSegment(c, b, d)) {
+    return true;
+  }
+  return abC !== abD && cdA !== cdB;
+}
+
+function orientation(a: PointSr, b: PointSr, c: PointSr): -1 | 0 | 1 {
+  const cross = (b.s_mm - a.s_mm) * (c.r_mm - a.r_mm) - (b.r_mm - a.r_mm) * (c.s_mm - a.s_mm);
+  const epsilon = 1e-9;
+  if (Math.abs(cross) <= epsilon) {
+    return 0;
+  }
+  return cross > 0 ? 1 : -1;
+}
+
+function pointOnSegment(a: PointSr, point: PointSr, b: PointSr): boolean {
+  const epsilon = 1e-9;
+  return (
+    point.s_mm >= Math.min(a.s_mm, b.s_mm) - epsilon &&
+    point.s_mm <= Math.max(a.s_mm, b.s_mm) + epsilon &&
+    point.r_mm >= Math.min(a.r_mm, b.r_mm) - epsilon &&
+    point.r_mm <= Math.max(a.r_mm, b.r_mm) + epsilon
+  );
 }
 
 export function featureTypeLabel(type: string): string {

@@ -751,6 +751,18 @@ export function App() {
               region={selectedRegion}
               onUpdate={(patch) => updatePlanningRegion(selectedRegion.id, (region) => ({ ...region, ...patch }))}
               onDelete={() => deletePlanningRegion(selectedRegion.id)}
+              onAddVertexAfter={(vertexIndex) =>
+                updatePlanningRegion(selectedRegion.id, (region) => {
+                  const point = region.polygon[vertexIndex];
+                  const next = region.polygon[(vertexIndex + 1) % region.polygon.length];
+                  const polygon = [...region.polygon];
+                  polygon.splice(vertexIndex + 1, 0, {
+                    s_mm: (point.s_mm + next.s_mm) / 2,
+                    r_mm: (point.r_mm + next.r_mm) / 2,
+                  });
+                  return { ...region, polygon };
+                })
+              }
               onUpdateBounds={(bounds) =>
                 updatePlanningRegion(selectedRegion.id, (region) => ({
                   ...region,
@@ -1797,12 +1809,14 @@ function RegionInspector({
   region,
   onUpdate,
   onDelete,
+  onAddVertexAfter,
   onUpdateBounds,
   onDeleteVertex,
 }: {
   region: PlanningRegion;
   onUpdate: (patch: Partial<PlanningRegion>) => void;
   onDelete: () => void;
+  onAddVertexAfter: (vertexIndex: number) => void;
   onUpdateBounds: (bounds: RegionBounds) => void;
   onDeleteVertex: (vertexIndex: number) => void;
 }) {
@@ -1830,6 +1844,10 @@ function RegionInspector({
             <span>v{index + 1}</span>
             <span>s {point.s_mm.toFixed(3)}</span>
             <span>r {point.r_mm.toFixed(3)}</span>
+            <button type="button" onClick={() => onAddVertexAfter(index)} title={`Add vertex after v${index + 1}`}>
+              <CirclePlus aria-hidden="true" />
+              Add
+            </button>
             <button type="button" onClick={() => onDeleteVertex(index)}>
               Delete
             </button>
