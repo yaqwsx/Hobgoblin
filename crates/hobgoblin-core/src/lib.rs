@@ -343,8 +343,6 @@ pub fn validate_project(project: &Project) -> ValidationReport {
         ));
     }
 
-    validate_tailstock(&mut diagnostics, &project.setup);
-
     validate_positive(
         &mut diagnostics,
         Some(project.stock.id.clone()),
@@ -363,6 +361,13 @@ pub fn validate_project(project: &Project) -> ValidationReport {
             "stock material id must not be empty",
         ));
     }
+
+    validate_tailstock(
+        &mut diagnostics,
+        &project.setup,
+        project.project.datum.s_offset_mm,
+        project.stock.length_mm,
+    );
 
     let mut ids = HashSet::new();
     collect_unique_id(&mut diagnostics, &mut ids, &project.project.id);
@@ -465,20 +470,36 @@ pub fn validate_project(project: &Project) -> ValidationReport {
     }
 }
 
-fn validate_tailstock(diagnostics: &mut Vec<Diagnostic>, setup: &Setup) {
+fn validate_tailstock(
+    diagnostics: &mut Vec<Diagnostic>,
+    setup: &Setup,
+    datum_s_offset_mm: f64,
+    stock_length_mm: f64,
+) {
     let tailstock = &setup.workholding.tailstock;
     match (
         tailstock.enabled,
         tailstock.protected_start_s_mm,
         tailstock.protected_end_s_mm,
     ) {
-        (true, Some(start), Some(end)) => validate_interval(
-            diagnostics,
-            Some(setup.id.clone()),
-            start,
-            end,
-            "tailstock protected interval",
-        ),
+        (true, Some(start), Some(end)) => {
+            validate_interval(
+                diagnostics,
+                Some(setup.id.clone()),
+                start,
+                end,
+                "tailstock protected interval",
+            );
+            validate_interval_within_stock(
+                diagnostics,
+                Some(setup.id.clone()),
+                start,
+                end,
+                datum_s_offset_mm,
+                stock_length_mm,
+                "tailstock protected interval",
+            );
+        }
         (true, _, _) => diagnostics.push(Diagnostic::error(
             Some(setup.id.clone()),
             "enabled tailstock must define protected start and end",
@@ -537,10 +558,14 @@ fn validate_stack_item(
                 "helical gear schema is present but toolpath generation is not implemented",
             ));
         }
-        StackItemKind::HerringboneGear { .. } => diagnostics.push(Diagnostic::warning(
-            Some(item.id.clone()),
-            "herringbone gear schema is present but toolpath generation is not implemented",
-        )),
+        StackItemKind::HerringboneGear { left, right, .. } => {
+            validate_spur_gear(diagnostics, &item.id, &left.spur, stock_diameter_mm);
+            validate_spur_gear(diagnostics, &item.id, &right.spur, stock_diameter_mm);
+            diagnostics.push(Diagnostic::warning(
+                Some(item.id.clone()),
+                "herringbone gear schema is present but toolpath generation is not implemented",
+            ));
+        }
         StackItemKind::EccentricSection { radius_mm, .. } => {
             validate_positive(
                 diagnostics,
@@ -844,5 +869,127 @@ mod tests {
         assert!(messages
             .iter()
             .any(|message| message.contains("eccentric section schema is present")));
+    }
+
+    #[test]
+    fn validates_nested_herringbone_spur_definitions() {
+        let project: Project = serde_json::from_str(
+            r#"{
+                "schema_version": 0,
+                "unit_system": "metric",
+                "project": {
+                    "id": "project.bad_herringbone",
+                    "name": "Bad herringbone project",
+                    "datum": { "kind": "user_defined", "s_offset_mm": 0.0 }
+                },
+                "setup": {
+                    "id": "setup.bad_herringbone",
+                    "name": "Setup",
+                    "machine_profile_id": "machine.carvera_air.default",
+                    "workholding": {
+                        "held_side": "left",
+                        "tailstock": { "enabled": false, "protected_start_s_mm": null, "protected_end_s_mm": null }
+                    },
+                    "protected_intervals": []
+                },
+                "stock": {
+                    "id": "stock.bad_herringbone",
+                    "diameter_mm": 8.0,
+                    "length_mm": 20.0,
+                    "material_id": "material.brass.generic"
+                },
+                "stack": [
+                    {
+                        "id": "feature.bad_herringbone",
+                        "name": "Bad herringbone placeholder",
+                        "length_mm": 10.0,
+                        "type": "herringbone_gear",
+                        "center_relief_width_mm": 1.0,
+                        "left": {
+                            "helix_angle_deg": 15.0,
+                            "hand": "left",
+                            "spur": {
+                                "module_mm": 0.0,
+                                "tooth_count": 2,
+                                "pressure_angle_deg": 20.0
+                            }
+                        },
+                        "right": {
+                            "helix_angle_deg": 15.0,
+                            "hand": "right",
+                            "spur": {
+                                "module_mm": 0.5,
+                                "tooth_count": 20,
+                                "pressure_angle_deg": 50.0
+                            }
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .expect("bad herringbone project parses");
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(report.has_errors());
+        assert!(messages.contains(&"gear module must be positive"));
+        assert!(messages.contains(&"gear tooth count must be at least 3"));
+        assert!(
+            messages.contains(&"pressure angle must be greater than 0 and less than 45 degrees")
+        );
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("herringbone gear schema is present")));
+    }
+
+    #[test]
+    fn warns_when_tailstock_protected_coordinates_exceed_stock() {
+        let project: Project = serde_json::from_str(
+            r#"{
+                "schema_version": 0,
+                "unit_system": "metric",
+                "project": {
+                    "id": "project.tailstock_bounds",
+                    "name": "Tailstock bounds project",
+                    "datum": { "kind": "user_defined", "s_offset_mm": 0.0 }
+                },
+                "setup": {
+                    "id": "setup.tailstock_bounds",
+                    "name": "Setup",
+                    "machine_profile_id": "machine.carvera_air.default",
+                    "workholding": {
+                        "held_side": "left",
+                        "tailstock": { "enabled": true, "protected_start_s_mm": 40.0, "protected_end_s_mm": 55.0 }
+                    },
+                    "protected_intervals": []
+                },
+                "stock": {
+                    "id": "stock.tailstock_bounds",
+                    "diameter_mm": 10.0,
+                    "length_mm": 50.0,
+                    "material_id": "material.brass.generic"
+                },
+                "stack": [
+                    {
+                        "id": "feature.section",
+                        "name": "Section",
+                        "length_mm": 20.0,
+                        "type": "cylindrical_section",
+                        "radius_mm": 3.0
+                    }
+                ]
+            }"#,
+        )
+        .expect("tailstock bounds project parses");
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(!report.has_errors());
+        assert!(messages
+            .iter()
+            .any(|message| message
+                .contains("tailstock protected interval extends outside stock bounds")));
     }
 }
