@@ -1,0 +1,29 @@
+{
+  "tools": [
+    {
+      "id": "tool.v.60deg.3mm_flat",
+      "type": "v_cutter",
+      "name": "60 degree V cutter, 0.3 mm flat",
+      "included_angle_deg": 60.0,
+      "tip_flat_width_mm": 0.3,
+      "max_cut_diameter_mm": 6.0,
+      "flute_length_mm": 8.0,
+      "shank_diameter_mm": 3.175,
+      "stickout_mm": 18.0,
+      "holder_diameter_mm": 12.0,
+      "holder_length_mm": 25.0
+    },
+    {
+      "id": "tool.endmill.3mm.flat",
+      "type": "cylindrical_cutter",
+      "name": "3 mm flat endmill",
+      "diameter_mm": 3.0,
+      "corner_radius_mm": 0.0,
+      "flute_length_mm": 10.0,
+      "cutting_length_mm": 10.0,
+      "shank_diameter_mm": 3.175,
+      "stickout_mm": 18.0
+    }
+  ]
+}
+

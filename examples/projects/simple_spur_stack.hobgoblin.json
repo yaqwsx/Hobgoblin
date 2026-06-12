@@ -1,0 +1,131 @@
+{
+  "schema_version": 0,
+  "unit_system": "metric",
+  "project": {
+    "id": "project.simple_spur_stack",
+    "name": "Simple spur stack",
+    "datum": {
+      "kind": "user_defined",
+      "s_offset_mm": 0.0
+    }
+  },
+  "setup": {
+    "id": "setup.single_carvera",
+    "name": "Single Carvera setup",
+    "machine_profile_id": "machine.carvera_air.default",
+    "workholding": {
+      "held_side": "left",
+      "tailstock": {
+        "enabled": true,
+        "protected_start_s_mm": 87.0,
+        "protected_end_s_mm": 95.0
+      }
+    },
+    "protected_intervals": [
+      {
+        "id": "protect.left_chuck",
+        "purpose": "chuck_grip",
+        "start_s_mm": -18.0,
+        "end_s_mm": 0.0
+      },
+      {
+        "id": "protect.tailstock",
+        "purpose": "tailstock",
+        "start_s_mm": 87.0,
+        "end_s_mm": 95.0
+      }
+    ]
+  },
+  "stock": {
+    "id": "stock.brass_16x100",
+    "diameter_mm": 16.0,
+    "length_mm": 100.0,
+    "material_id": "material.brass.generic"
+  },
+  "stack": [
+    {
+      "id": "feature.left_journal",
+      "name": "Left journal",
+      "length_mm": 20.0,
+      "type": "cylindrical_section",
+      "radius_mm": 4.0,
+      "machining": {
+        "roughing_tool_id": "tool.endmill.3mm.flat",
+        "finishing_tool_id": "tool.endmill.3mm.flat"
+      }
+    },
+    {
+      "id": "feature.spur_20t",
+      "name": "20T spur gear",
+      "length_mm": 12.0,
+      "type": "spur_gear",
+      "module_mm": 0.5,
+      "tooth_count": 20,
+      "pressure_angle_deg": 20.0,
+      "profile_shift": 0.0,
+      "addendum_coeff": 1.0,
+      "dedendum_coeff": 1.25,
+      "backlash_mm": 0.02,
+      "phase_deg": 0.0,
+      "machining": {
+        "od_tool_id": "tool.endmill.3mm.flat",
+        "v_tool_id": "tool.v.60deg.3mm_flat",
+        "root_tool_id": "tool.v.60deg.3mm_flat"
+      }
+    },
+    {
+      "id": "feature.right_journal",
+      "name": "Right journal",
+      "length_mm": 55.0,
+      "type": "cylindrical_section",
+      "radius_mm": 3.0,
+      "machining": {
+        "roughing_tool_id": "tool.endmill.3mm.flat",
+        "finishing_tool_id": "tool.endmill.3mm.flat"
+      }
+    }
+  ],
+  "planning_regions": [
+    {
+      "id": "region.initial_rough",
+      "name": "Initial roughing envelope",
+      "stage": 10,
+      "purpose": "roughing",
+      "allowed_feature_ids": [
+        "feature.left_journal",
+        "feature.spur_20t",
+        "feature.right_journal"
+      ],
+      "polygon": [
+        { "s_mm": 0.0, "r_mm": 8.0 },
+        { "s_mm": 87.0, "r_mm": 8.0 },
+        { "s_mm": 87.0, "r_mm": 5.8 },
+        { "s_mm": 0.0, "r_mm": 5.8 }
+      ]
+    },
+    {
+      "id": "region.gear_finish",
+      "name": "Gear finish region",
+      "stage": 100,
+      "purpose": "finishing",
+      "allowed_feature_ids": [
+        "feature.spur_20t"
+      ],
+      "polygon": [
+        { "s_mm": 20.0, "r_mm": 6.0 },
+        { "s_mm": 32.0, "r_mm": 6.0 },
+        { "s_mm": 32.0, "r_mm": 4.0 },
+        { "s_mm": 20.0, "r_mm": 4.0 }
+      ]
+    }
+  ],
+  "library_refs": {
+    "machine_profile_id": "machine.carvera_air.default",
+    "material_id": "material.brass.generic",
+    "tool_ids": [
+      "tool.v.60deg.3mm_flat",
+      "tool.endmill.3mm.flat"
+    ]
+  }
+}
+

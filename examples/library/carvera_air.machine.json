@@ -1,0 +1,21 @@
+{
+  "id": "machine.carvera_air.default",
+  "name": "Makera Carvera Air",
+  "axis_mapping": {
+    "shaft_axis": "X",
+    "virtual_rack_axis": "Y",
+    "radial_axis": "Z",
+    "rotary_axis": "A",
+    "rotary_sign": 1.0
+  },
+  "limits": {
+    "max_stock_diameter_mm": 92.0,
+    "max_stock_length_mm": 200.0,
+    "travel_x_mm": 300.0,
+    "travel_y_mm": 200.0,
+    "travel_z_mm": 130.0,
+    "max_spindle_rpm": 13000
+  },
+  "postprocessor": "carvera_air"
+}
+

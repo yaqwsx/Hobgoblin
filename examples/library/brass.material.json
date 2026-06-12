@@ -1,0 +1,28 @@
+{
+  "id": "material.brass.generic",
+  "name": "Generic brass",
+  "recipes": [
+    {
+      "tool_class": "v_cutter",
+      "engagement": "full_width_generate",
+      "feed_mm_min": 80.0,
+      "spindle_rpm": 12000,
+      "radial_depth_per_pass_mm": 0.1
+    },
+    {
+      "tool_class": "v_cutter",
+      "engagement": "side_flank_generate",
+      "feed_mm_min": 160.0,
+      "spindle_rpm": 12000,
+      "radial_depth_per_pass_mm": 0.05
+    },
+    {
+      "tool_class": "cylindrical_cutter",
+      "engagement": "cylindrical_surface",
+      "feed_mm_min": 250.0,
+      "spindle_rpm": 12000,
+      "radial_depth_per_pass_mm": 0.2
+    }
+  ]
+}
+
