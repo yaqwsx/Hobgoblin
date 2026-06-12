@@ -1,0 +1,28 @@
+name: Design question
+description: Product, geometry, CAM, or architecture decision that blocks implementation
+title: "[Design] "
+labels:
+  - design
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: State the unresolved decision.
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommended Answer
+      description: Include a concrete default recommendation when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What code, UX, or manufacturing behavior changes depending on the answer?
+    validations:
+      required: true
+

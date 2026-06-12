@@ -1,0 +1,49 @@
+name: Agent task
+description: Implementation task intended for an AI or human coding agent
+title: "[Agent Task] "
+labels:
+  - agent-task
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What the agent needs to understand before changing code.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Concrete work included in this task.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out Of Scope
+      description: Work the agent must avoid.
+    validations:
+      required: true
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: Deliverables
+      description: Files, APIs, behavior, or docs expected from the task.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Commands, tests, examples, or manual checks required before completion.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Issues, milestones, or decisions that must exist first.
+    validations:
+      required: false
+
