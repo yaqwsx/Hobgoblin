@@ -118,6 +118,7 @@ dependencies = [
  "clap",
  "hobgoblin-core",
  "hobgoblin-planner",
+ "serde",
  "serde_json",
 ]
 

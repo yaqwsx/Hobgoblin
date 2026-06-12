@@ -14,5 +14,5 @@ anyhow.workspace = true
 clap.workspace = true
 hobgoblin-core = { path = "../hobgoblin-core" }
 hobgoblin-planner = { path = "../hobgoblin-planner" }
+serde.workspace = true
 serde_json.workspace = true
-

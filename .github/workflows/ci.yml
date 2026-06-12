@@ -47,10 +47,18 @@ jobs:
         run: cargo test --locked --workspace
 
       - name: Validate sample project
-        run: cargo run --locked -p hobgoblin-cli -- validate examples/projects/simple_spur_stack.hobgoblin.json
+        run: |
+          cargo run --locked -p hobgoblin-cli -- validate examples/projects/simple_spur_stack.hobgoblin.json \
+            --machine examples/library/carvera_air.machine.json \
+            --tools examples/library/basic_tools.tools.json \
+            --material examples/library/brass.material.json
 
       - name: Build sample operation graph
-        run: cargo run --locked -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin.json
+        run: |
+          cargo run --locked -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin.json \
+            --machine examples/library/carvera_air.machine.json \
+            --tools examples/library/basic_tools.tools.json \
+            --material examples/library/brass.material.json
 
   json:
     name: JSON examples

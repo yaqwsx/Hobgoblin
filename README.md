@@ -17,8 +17,14 @@ Once a Rust toolchain is installed:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p hobgoblin-cli -- validate examples/projects/simple_spur_stack.hobgoblin.json
-cargo run -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin.json
+cargo run -p hobgoblin-cli -- validate examples/projects/simple_spur_stack.hobgoblin.json \
+  --machine examples/library/carvera_air.machine.json \
+  --tools examples/library/basic_tools.tools.json \
+  --material examples/library/brass.material.json
+cargo run -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin.json \
+  --machine examples/library/carvera_air.machine.json \
+  --tools examples/library/basic_tools.tools.json \
+  --material examples/library/brass.material.json
 ```
 
 CI runs these checks on pushes to `main`, pull requests, and manual dispatch.

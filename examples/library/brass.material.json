@@ -4,6 +4,7 @@
   "recipes": [
     {
       "tool_class": "v_cutter",
+      "operation": "roughing",
       "engagement": "full_width_generate",
       "feed_mm_min": 80.0,
       "spindle_rpm": 12000,
@@ -11,6 +12,7 @@
     },
     {
       "tool_class": "v_cutter",
+      "operation": "flank_generation",
       "engagement": "side_flank_generate",
       "feed_mm_min": 160.0,
       "spindle_rpm": 12000,
@@ -18,6 +20,7 @@
     },
     {
       "tool_class": "cylindrical_cutter",
+      "operation": "surface_finishing",
       "engagement": "cylindrical_surface",
       "feed_mm_min": 250.0,
       "spindle_rpm": 12000,
@@ -25,4 +28,3 @@
     }
   ]
 }
-
