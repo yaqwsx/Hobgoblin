@@ -242,6 +242,7 @@ button {
 .feature-tree,
 .inspector {
   z-index: 2;
+  overflow: hidden;
 }
 
 .editor-plane {
@@ -252,7 +253,9 @@ button {
 .feature-tree,
 .inspector {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
+  background: #f7faf4;
 }
 
 .panel-header {
@@ -270,19 +273,62 @@ button {
   font-weight: 700;
 }
 
+.feature-tree .panel-header,
+.inspector .panel-header {
+  min-height: 60px;
+  border-bottom: 1px solid #cad5cb;
+  background: linear-gradient(#fbfcf8, #eef4eb);
+}
+
+.feature-tree .panel-header h2,
+.inspector .panel-header h2 {
+  color: #172226;
+  font-size: 16px;
+}
+
+.feature-tree .panel-header span,
+.inspector .panel-header span {
+  max-width: 100%;
+  overflow: hidden;
+  color: #68777c;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tree-list,
 .inspector-content {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow: auto;
+  overflow-x: hidden;
   padding: 10px;
+}
+
+.feature-tree .tree-list,
+.inspector .inspector-content {
+  background:
+    linear-gradient(90deg, rgba(61, 141, 107, 0.06), transparent 22px),
+    #f7faf4;
 }
 
 .tree-section {
   display: grid;
   gap: 6px;
+  min-width: 0;
   margin-bottom: 12px;
 }
 
 .tree-section > span {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d9e2d8;
+  border-radius: 4px;
+  background: #eef4eb;
   color: #59676c;
   font-size: 11px;
   font-weight: 800;
@@ -291,6 +337,8 @@ button {
 
 .tree-item {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 54px;
   display: grid;
   gap: 4px;
@@ -300,10 +348,16 @@ button {
   background: #ffffff;
   color: #253035;
   text-align: left;
+  box-shadow: 0 1px 1px rgba(30, 42, 45, 0.04);
+}
+
+.tree-item:hover {
+  border-color: #b8c8bd;
+  background: #fbfdf8;
 }
 
 .tree-item-with-actions {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 34px;
   align-items: stretch;
   padding: 0;
   overflow: hidden;
@@ -313,6 +367,7 @@ button {
   display: grid;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
   padding: 9px 10px;
   border: 0;
   background: transparent;
@@ -323,6 +378,8 @@ button {
 .tree-row-actions {
   display: grid;
   grid-template-rows: repeat(3, 1fr);
+  width: 34px;
+  min-width: 34px;
   border-left: 1px solid #d8dfd6;
 }
 
@@ -331,7 +388,8 @@ button {
 }
 
 .tree-row-actions button {
-  width: 34px;
+  width: 100%;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -352,7 +410,8 @@ button {
 
 .tree-item.selected {
   border-color: #3d8d6b;
-  background: #edf7f2;
+  background: #e5f4ed;
+  box-shadow: inset 3px 0 0 #3d8d6b, 0 1px 2px rgba(30, 42, 45, 0.08);
 }
 
 .tree-item.dragging {
@@ -365,8 +424,12 @@ button {
 }
 
 .tree-item span:last-child {
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   color: #68777c;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-title {
@@ -374,7 +437,10 @@ button {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  overflow: hidden;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-title svg {
@@ -622,13 +688,14 @@ button {
   margin: 0 0 14px;
   padding: 10px;
   border: 1px solid #d8dfd6;
-  border-radius: 4px;
+  border-radius: 6px;
   background: #ffffff;
+  box-shadow: inset 3px 0 0 #d9e7db, 0 1px 2px rgba(30, 42, 45, 0.04);
 }
 
 .field-group legend {
   padding: 0 5px;
-  color: #354146;
+  color: #253035;
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;

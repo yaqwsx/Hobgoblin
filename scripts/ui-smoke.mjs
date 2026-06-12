@@ -37,6 +37,19 @@ try {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.getByText("Simple spur stack").waitFor();
   await page.locator(".feature-tree").getByText("20T spur gear").waitFor();
+  const featureTreeBox = await page.locator(".feature-tree").boundingBox();
+  const visibleStackAction = page
+    .locator(".feature-tree .tree-item-with-actions", { hasText: "20T spur gear" })
+    .locator(".tree-row-actions");
+  const visibleStackActionBox = await visibleStackAction.boundingBox();
+  assert(featureTreeBox !== null, "expected feature tree panel to be measurable");
+  assert(visibleStackActionBox !== null, "expected stack row action column to be measurable");
+  const featureTreeRight = featureTreeBox.x + featureTreeBox.width;
+  const visibleStackActionRight = visibleStackActionBox.x + visibleStackActionBox.width;
+  assert(
+    visibleStackActionRight <= featureTreeRight,
+    `expected stack row actions to stay inside feature tree, action right=${visibleStackActionRight.toFixed(2)} panel right=${featureTreeRight.toFixed(2)}`,
+  );
   assert(
     (await page.locator(".feature-tree").getByText("Stack intervals", { exact: true }).count()) === 0,
     "expected internal stack intervals to stay out of the feature browser",
