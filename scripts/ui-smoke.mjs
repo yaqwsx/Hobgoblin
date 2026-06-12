@@ -94,6 +94,34 @@ try {
   await page.locator(".viewport-controls").getByLabel("Pan up").waitFor();
   await page.locator(".viewport-controls").getByLabel("Pan down").waitFor();
   await page.locator(".datum-marker").getByText("datum").waitFor();
+  await page.locator(".axis-label").getByText("d / mm", { exact: true }).waitFor();
+  assert((await page.locator(".shaft-axis").count()) === 1, "expected preview to render a central shaft axis");
+  assert((await page.locator(".gear-teeth").count()) >= 2, "expected gears to render visible teeth on both sides of the shaft");
+  const stockBoxBeforeNavigation = await page.locator(".stock-rect").boundingBox();
+  const shaftAxisY = await page.locator(".shaft-axis").evaluate((axis) => {
+    const svg = axis.ownerSVGElement;
+    if (!svg) {
+      return null;
+    }
+    const point = svg.createSVGPoint();
+    point.x = Number(axis.getAttribute("x1"));
+    point.y = Number(axis.getAttribute("y1"));
+    const matrix = svg.getScreenCTM();
+    return matrix ? point.matrixTransform(matrix).y : null;
+  });
+  const shaftAxisPaintCheck = await page.locator(".shaft-axis").evaluate((axis) => {
+    const materialLayers = [...document.querySelectorAll(".stock-rect, .profile, .gear-teeth, .protected")];
+    return materialLayers.every((layer) =>
+      Boolean(layer.compareDocumentPosition(axis) & Node.DOCUMENT_POSITION_FOLLOWING),
+    );
+  });
+  assert(stockBoxBeforeNavigation !== null, "expected stock material to be measurable");
+  assert(shaftAxisY !== null, "expected shaft axis to be measurable");
+  assert(shaftAxisPaintCheck, "expected central shaft axis to be painted above solid material");
+  assert(
+    stockBoxBeforeNavigation.y < shaftAxisY && stockBoxBeforeNavigation.y + stockBoxBeforeNavigation.height > shaftAxisY,
+    "expected stock material to span both sides of the shaft axis",
+  );
   await page.locator(".viewport-controls").getByLabel("Zoom in").click();
   await page.getByText("1.5x").waitFor();
   await page.locator(".viewport-controls").getByLabel("Pan right").click();
@@ -138,7 +166,7 @@ try {
   const panDeltaX = (panAnchorAfter.x + panAnchorAfter.width / 2) - (panAnchorBefore.x + panAnchorBefore.width / 2);
   const panDeltaY = (panAnchorAfter.y + panAnchorAfter.height / 2) - (panAnchorBefore.y + panAnchorBefore.height / 2);
   assert(panDeltaX > 20, `expected drag panning to move model right, got x delta ${panDeltaX.toFixed(2)} px`);
-  assert(panDeltaY > 12, `expected drag panning to move model down, got y delta ${panDeltaY.toFixed(2)} px`);
+  assert(panDeltaY > 8, `expected drag panning to move model down, got y delta ${panDeltaY.toFixed(2)} px`);
   await page.mouse.move(panStartX, panStartY);
   await page.keyboard.down("Shift");
   await page.mouse.down();
@@ -152,7 +180,7 @@ try {
   const reversePanDeltaY =
     (panAnchorAfterReverse.y + panAnchorAfterReverse.height / 2) - (panAnchorAfter.y + panAnchorAfter.height / 2);
   assert(reversePanDeltaX < -20, `expected reverse drag panning to move model left, got x delta ${reversePanDeltaX.toFixed(2)} px`);
-  assert(reversePanDeltaY < -12, `expected reverse drag panning to move model up, got y delta ${reversePanDeltaY.toFixed(2)} px`);
+  assert(reversePanDeltaY < -8, `expected reverse drag panning to move model up, got y delta ${reversePanDeltaY.toFixed(2)} px`);
   await page.locator(".viewport-controls").getByLabel("Fit stack").click();
   await page.getByText("1.0x").waitFor();
 

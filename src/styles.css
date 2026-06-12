@@ -529,8 +529,16 @@ button {
   stroke-width: 1;
 }
 
+.shaft-axis {
+  pointer-events: none;
+  stroke: #526367;
+  stroke-width: 1.5;
+  stroke-dasharray: 10 6;
+}
+
 .axis-label,
 .feature-label,
+.tooth-count-label,
 .protected-label,
 .datum-marker text,
 .measurement-overlay text {
@@ -558,23 +566,32 @@ button {
 }
 
 .stock-rect {
-  fill: #eef2ee;
-  stroke: #889691;
+  fill: url(#stockGradient);
+  stroke: #c2762e;
   stroke-width: 1.5;
   cursor: pointer;
 }
 
 .stock-rect.selected {
-  fill: #f7ead2;
   stroke: #b97328;
-  stroke-width: 2.5;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 5px rgba(185, 115, 40, 0.38));
 }
 
 .profile {
-  fill: #cfdcda;
+  fill: url(#shaftGradient);
   stroke: #65777a;
   stroke-width: 1.5;
   cursor: pointer;
+}
+
+.profile.solid-profile {
+  filter: drop-shadow(0 2px 2px rgba(38, 50, 54, 0.16));
+}
+
+.profile.gear-profile {
+  fill: url(#gearGradient);
+  stroke: #55746e;
 }
 
 .profile-hit {
@@ -584,9 +601,27 @@ button {
 }
 
 .profile.selected {
-  fill: #7ec4a5;
   stroke: #2c6f55;
-  stroke-width: 2;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 5px rgba(44, 111, 85, 0.45));
+}
+
+.gear-teeth {
+  fill: url(#gearGradient);
+  stroke: #55746e;
+  stroke-width: 1.3;
+  cursor: pointer;
+}
+
+.gear-teeth.selected {
+  stroke: #2c6f55;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 5px rgba(44, 111, 85, 0.45));
+}
+
+.tooth-count-label {
+  fill: #536267;
+  font-size: 10px;
 }
 
 .protected {

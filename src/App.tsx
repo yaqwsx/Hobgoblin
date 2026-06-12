@@ -1146,8 +1146,9 @@ function PlanningEditor({
   const minS = visibleRangeS >= domainRangeS ? domainMinS : visibleCenterS - visibleRangeS / 2;
   const maxS = visibleRangeS >= domainRangeS ? domainMaxS : visibleCenterS + visibleRangeS / 2;
   const sRange = Math.max(1, maxS - minS);
-  const domainMinR = 0;
-  const domainMaxR = Math.max(1, maxProfileRadius);
+  const maxProfileRadiusWithMargin = Math.max(1, maxProfileRadius) * 1.12;
+  const domainMinR = -maxProfileRadiusWithMargin;
+  const domainMaxR = maxProfileRadiusWithMargin;
   const domainRangeR = domainMaxR - domainMinR;
   const visibleRangeR = domainRangeR / viewZoom;
   const domainCenterR = (domainMinR + domainMaxR) / 2;
@@ -1180,8 +1181,43 @@ function PlanningEditor({
   };
   const clampPoint = (point: PointSr): PointSr => ({
     s_mm: Math.min(domainMaxS, Math.max(domainMinS, point.s_mm)),
-    r_mm: Math.min(domainMaxR, Math.max(domainMinR, point.r_mm)),
+    r_mm: Math.min(domainMaxR, Math.max(0, point.r_mm)),
   });
+  const rectForRadius = (radiusMm: number) => {
+    const topY = yForR(radiusMm);
+    const bottomY = yForR(-radiusMm);
+    return { y: topY, height: bottomY - topY };
+  };
+  const isGearFeature = (item: StackItem) =>
+    item.type === "spur_gear" || item.type === "helical_gear" || item.type === "herringbone_gear";
+  const toothCountForItem = (item: StackItem): number => {
+    const direct = typeof item.tooth_count === "number" ? item.tooth_count : null;
+    const spur = typeof item.spur === "object" && item.spur !== null ? (item.spur as Record<string, unknown>) : null;
+    const nested = typeof spur?.tooth_count === "number" ? spur.tooth_count : null;
+    return Math.max(6, Math.min(48, Math.round(direct ?? nested ?? 18)));
+  };
+  const moduleForItem = (item: StackItem): number => {
+    const direct = typeof item.module_mm === "number" ? item.module_mm : null;
+    const spur = typeof item.spur === "object" && item.spur !== null ? (item.spur as Record<string, unknown>) : null;
+    const nested = typeof spur?.module_mm === "number" ? spur.module_mm : null;
+    return Math.max(0.05, direct ?? nested ?? Math.max(0.1, radiusForItem(item) * 0.08));
+  };
+  const gearToothPath = (xStart: number, xEnd: number, outerRadius: number, rootRadius: number, side: 1 | -1) => {
+    const toothCount = Math.max(6, Math.min(36, Math.round((xEnd - xStart) / 7)));
+    const pitch = (xEnd - xStart) / toothCount;
+    const rootY = yForR(side * rootRadius);
+    const outerY = yForR(side * outerRadius);
+    const innerY = yForR(side * (rootRadius - Math.max(0.05, (outerRadius - rootRadius) * 0.35)));
+    const points = [`${xStart},${innerY}`, `${xStart},${rootY}`];
+    for (let index = 0; index < toothCount; index += 1) {
+      const x0 = xStart + pitch * index;
+      points.push(`${x0 + pitch * 0.2},${rootY}`);
+      points.push(`${x0 + pitch * 0.5},${outerY}`);
+      points.push(`${x0 + pitch * 0.8},${rootY}`);
+    }
+    points.push(`${xEnd},${rootY}`, `${xEnd},${innerY}`);
+    return points.join(" ");
+  };
 
   const setZoom = (nextZoom: number) => {
     const clampedZoom = Math.min(8, Math.max(1, nextZoom));
@@ -1341,6 +1377,27 @@ function PlanningEditor({
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5ebe4" strokeWidth="1" />
           </pattern>
+          <linearGradient id="stockGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#f5ead7" />
+            <stop offset="42%" stopColor="#ead8b8" />
+            <stop offset="50%" stopColor="#d2b47e" />
+            <stop offset="58%" stopColor="#ead8b8" />
+            <stop offset="100%" stopColor="#f9f1e4" />
+          </linearGradient>
+          <linearGradient id="shaftGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#dfe8e5" />
+            <stop offset="38%" stopColor="#bed0cd" />
+            <stop offset="50%" stopColor="#90aaa7" />
+            <stop offset="62%" stopColor="#bed0cd" />
+            <stop offset="100%" stopColor="#eef4f2" />
+          </linearGradient>
+          <linearGradient id="gearGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#dbe7e3" />
+            <stop offset="36%" stopColor="#a9c5bd" />
+            <stop offset="50%" stopColor="#7fa89d" />
+            <stop offset="64%" stopColor="#a9c5bd" />
+            <stop offset="100%" stopColor="#ecf4f1" />
+          </linearGradient>
         </defs>
         <rect
           x={padding.left}
@@ -1377,10 +1434,9 @@ function PlanningEditor({
           }}
           onPointerCancel={() => setPanStart(null)}
         />
-        <line x1={padding.left} y1={yForR(0)} x2={padding.left + plotWidth} y2={yForR(0)} className="axis-line" />
         <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + plotHeight} className="axis-line" />
         <text x={padding.left} y={viewHeight - 12} className="axis-label">s / mm</text>
-        <text x={12} y={padding.top + 14} className="axis-label">r / mm</text>
+        <text x={12} y={padding.top + 14} className="axis-label">d / mm</text>
         {stockStartS >= minS && stockStartS <= maxS ? (
           <g className="datum-marker">
             <line x1={xForS(stockStartS)} y1={padding.top} x2={xForS(stockStartS)} y2={padding.top + plotHeight} />
@@ -1388,14 +1444,20 @@ function PlanningEditor({
           </g>
         ) : null}
 
-        <rect
-          x={xForS(stockStartS)}
-          y={yForR(project.stock.diameter_mm / 2)}
-          width={xForS(stockEndS) - xForS(stockStartS)}
-          height={yForR(0) - yForR(project.stock.diameter_mm / 2)}
-          className={selectedObjectId === project.stock.id ? "stock-rect selected" : "stock-rect"}
-          onClick={() => onSelect(project.stock.id)}
-        />
+        {(() => {
+          const stockRadius = project.stock.diameter_mm / 2;
+          const stockRect = rectForRadius(stockRadius);
+          return (
+            <rect
+              x={xForS(stockStartS)}
+              y={stockRect.y}
+              width={xForS(stockEndS) - xForS(stockStartS)}
+              height={stockRect.height}
+              className={selectedObjectId === project.stock.id ? "stock-rect selected" : "stock-rect"}
+              onClick={() => onSelect(project.stock.id)}
+            />
+          );
+        })()}
 
         {protectedIntervals.map((interval) => {
           const visibleStartS = Math.max(minS, interval.start_s_mm);
@@ -1421,6 +1483,11 @@ function PlanningEditor({
 
         {spans.map((span) => {
           const radius = radiusForItem(span.item);
+          const gearFeature = isGearFeature(span.item);
+          const rootRadius = gearFeature
+            ? Math.max(radius * 0.62, radius - moduleForItem(span.item) * 1.25)
+            : radius;
+          const featureRect = rectForRadius(rootRadius);
           const xStart = xForS(span.startS);
           const xEnd = xForS(span.endS);
           const featureWidth = xEnd - xStart;
@@ -1430,12 +1497,32 @@ function PlanningEditor({
             <g key={span.item.id}>
               <rect
                 x={xStart}
-                y={yForR(radius)}
+                y={featureRect.y}
                 width={featureWidth}
-                height={yForR(0) - yForR(radius)}
-                className={selectedObjectId === span.item.id ? "profile selected" : "profile"}
+                height={featureRect.height}
+                className={[
+                  selectedObjectId === span.item.id ? "profile selected" : "profile",
+                  gearFeature ? "gear-profile" : "solid-profile",
+                ].join(" ")}
                 onClick={() => onSelect(span.item.id)}
               />
+              {gearFeature ? (
+                <>
+                  <polygon
+                    points={gearToothPath(xStart, xEnd, radius, rootRadius, 1)}
+                    className={selectedObjectId === span.item.id ? "gear-teeth selected" : "gear-teeth"}
+                    onClick={() => onSelect(span.item.id)}
+                  />
+                  <polygon
+                    points={gearToothPath(xStart, xEnd, radius, rootRadius, -1)}
+                    className={selectedObjectId === span.item.id ? "gear-teeth selected" : "gear-teeth"}
+                    onClick={() => onSelect(span.item.id)}
+                  />
+                  <text x={xStart + 5} y={yForR(-rootRadius) - 6} className="tooth-count-label">
+                    {toothCountForItem(span.item)} teeth
+                  </text>
+                </>
+              ) : null}
               {hitWidth > featureWidth ? (
                 <rect
                   x={hitX}
@@ -1465,6 +1552,8 @@ function PlanningEditor({
             </g>
           );
         })}
+
+        <line x1={padding.left} y1={yForR(0)} x2={padding.left + plotWidth} y2={yForR(0)} className="shaft-axis" />
 
         {planningRegions.map((region) => {
           const bounds = regionBounds(region);
