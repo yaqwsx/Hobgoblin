@@ -141,6 +141,7 @@ export function insertStackItem(
       item,
       ...project.stack.slice(boundedIndex),
     ],
+    planning_regions: project.planning_regions?.map((region) => appendAllowedFeature(region, item.id)),
   };
 }
 
@@ -259,4 +260,17 @@ function clampIndex(index: number, length: number): number {
     return length;
   }
   return Math.min(Math.max(Math.trunc(index), 0), length);
+}
+
+function appendAllowedFeature(region: PlanningRegion, itemId: string): PlanningRegion {
+  if (!region.allowed_feature_ids || region.allowed_feature_ids.length === 0) {
+    return region;
+  }
+  if (region.allowed_feature_ids.includes(itemId)) {
+    return region;
+  }
+  return {
+    ...region,
+    allowed_feature_ids: [...region.allowed_feature_ids, itemId],
+  };
 }

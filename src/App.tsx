@@ -254,8 +254,18 @@ export function App() {
 
   function updateProject(project: HobgoblinProject, statusMessage: string) {
     const source = JSON.stringify(project, null, 2);
-    const validation = isTauriRuntime()
-      ? loaded?.validation ?? { diagnostics: [], intervals: [] }
+    const isDesktopRuntime = isTauriRuntime();
+    const validation = isDesktopRuntime
+      ? {
+          diagnostics: [
+            {
+              severity: "warning" as const,
+              object_id: null,
+              message: "Validation pending after edit",
+            },
+          ],
+          intervals: loaded?.validation.intervals ?? [],
+        }
       : validateProjectInBrowser(source);
     setLoaded((current) =>
       current
@@ -268,6 +278,18 @@ export function App() {
         : current,
     );
     setStatus(statusMessage);
+    if (isDesktopRuntime) {
+      void validateProjectSource(source)
+        .then((nextValidation) => {
+          setLoaded((current) =>
+            current?.source === source ? { ...current, validation: nextValidation } : current,
+          );
+          setStatus(`${statusMessage}; validation refreshed`);
+        })
+        .catch((error) => {
+          setStatus(errorMessage(error));
+        });
+    }
   }
 
   function updatePlanningRegion(regionId: string, updater: (region: PlanningRegion) => PlanningRegion) {
@@ -1209,7 +1231,12 @@ function NumberField({
         type="number"
         step={step}
         value={Number.isFinite(value) ? value : 0}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        onChange={(event) => {
+          const nextValue = Number(event.currentTarget.value);
+          if (Number.isFinite(nextValue)) {
+            onChange(nextValue);
+          }
+        }}
       />
     </label>
   );
