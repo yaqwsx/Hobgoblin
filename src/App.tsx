@@ -1104,6 +1104,7 @@ function PlanningEditor({
   const svgRef = useRef<SVGSVGElement>(null);
   const [viewZoom, setViewZoom] = useState(1);
   const [viewCenterOffsetS, setViewCenterOffsetS] = useState(0);
+  const [panStart, setPanStart] = useState<{ pointerId: number; clientX: number; centerOffsetS: number } | null>(null);
   const spans = useMemo(() => stackSpans(project), [project]);
   const stockStartS = project.project.datum.s_offset_mm;
   const stockEndS = stockStartS + project.stock.length_mm;
@@ -1147,19 +1148,25 @@ function PlanningEditor({
   const yForR = (rMm: number) => padding.top + (1 - rMm / maxR) * plotHeight;
   const sForX = (x: number) => minS + ((x - padding.left) / plotWidth) * sRange;
   const rForY = (y: number) => (1 - (y - padding.top) / plotHeight) * maxR;
+  const clampCenterOffset = (offsetS: number, zoom = viewZoom) => {
+    const nextVisibleRangeS = domainRangeS / zoom;
+    const maxOffset = Math.max(0, domainRangeS / 2 - nextVisibleRangeS / 2);
+    return Math.min(maxOffset, Math.max(-maxOffset, offsetS));
+  };
   const clampPoint = (point: PointSr): PointSr => ({
     s_mm: Math.min(domainMaxS, Math.max(domainMinS, point.s_mm)),
     r_mm: Math.min(maxR, Math.max(0, point.r_mm)),
   });
 
   const setZoom = (nextZoom: number) => {
-    setViewZoom(Math.min(8, Math.max(1, nextZoom)));
+    const clampedZoom = Math.min(8, Math.max(1, nextZoom));
+    setViewZoom(clampedZoom);
+    setViewCenterOffsetS((current) => clampCenterOffset(current, clampedZoom));
   };
   const panView = (direction: -1 | 1) => {
     setViewCenterOffsetS((current) => {
       const next = current + direction * visibleRangeS * 0.25;
-      const maxOffset = Math.max(0, domainRangeS / 2 - visibleRangeS / 2);
-      return Math.min(maxOffset, Math.max(-maxOffset, next));
+      return clampCenterOffset(next);
     });
   };
   const fitView = () => {
@@ -1167,15 +1174,43 @@ function PlanningEditor({
     setViewCenterOffsetS(0);
   };
 
-  function eventPoint(event: React.PointerEvent<SVGElement>): PointSr {
+  function svgCoordinates(clientX: number, clientY: number) {
     const svg = svgRef.current;
     if (!svg) {
-      return { s_mm: minS, r_mm: 0 };
+      return { x: padding.left, y: yForR(0) };
     }
     const rect = svg.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * viewWidth;
-    const y = ((event.clientY - rect.top) / rect.height) * viewHeight;
+    return {
+      x: ((clientX - rect.left) / rect.width) * viewWidth,
+      y: ((clientY - rect.top) / rect.height) * viewHeight,
+    };
+  }
+
+  function eventPoint(event: React.PointerEvent<SVGElement>): PointSr {
+    const { x, y } = svgCoordinates(event.clientX, event.clientY);
     return clampPoint({ s_mm: sForX(x), r_mm: rForY(y) });
+  }
+
+  function zoomToClientPoint(clientX: number, clientY: number, nextZoom: number) {
+    const clampedZoom = Math.min(8, Math.max(1, nextZoom));
+    if (clampedZoom === viewZoom) {
+      return;
+    }
+    const { x } = svgCoordinates(clientX, clientY);
+    const cursorRatio = Math.min(1, Math.max(0, (x - padding.left) / plotWidth));
+    const cursorS = sForX(x);
+    const nextVisibleRangeS = domainRangeS / clampedZoom;
+    const nextCenterS = cursorS + (0.5 - cursorRatio) * nextVisibleRangeS;
+    setViewZoom(clampedZoom);
+    setViewCenterOffsetS(clampedZoom <= 1 ? 0 : clampCenterOffset(nextCenterS - domainCenterS, clampedZoom));
+  }
+
+  function applyPan(clientX: number, plotCssWidth: number) {
+    if (!panStart) {
+      return;
+    }
+    const deltaXS = ((clientX - panStart.clientX) / Math.max(1, plotCssWidth)) * visibleRangeS;
+    setViewCenterOffsetS(clampCenterOffset(panStart.centerOffsetS - deltaXS));
   }
 
   const measurement =
@@ -1222,6 +1257,34 @@ function PlanningEditor({
         viewBox={`0 0 ${viewWidth} ${viewHeight}`}
         role="img"
         aria-label="2D shaft and planning editor"
+        onWheel={(event) => {
+          event.preventDefault();
+          zoomToClientPoint(event.clientX, event.clientY, viewZoom * (event.deltaY > 0 ? 1 / 1.2 : 1.2));
+        }}
+        onPointerDown={(event) => {
+          if (!event.shiftKey || event.button !== 0) {
+            return;
+          }
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setPanStart({
+            pointerId: event.pointerId,
+            clientX: event.clientX,
+            centerOffsetS: viewCenterOffsetS,
+          });
+        }}
+        onPointerMove={(event) => {
+          if (!panStart || panStart.pointerId !== event.pointerId || event.buttons !== 1) {
+            return;
+          }
+          const svgBounds = event.currentTarget.getBoundingClientRect();
+          applyPan(event.clientX, svgBounds.width * (plotWidth / viewWidth));
+        }}
+        onPointerUp={(event) => {
+          if (panStart?.pointerId === event.pointerId) {
+            setPanStart(null);
+          }
+        }}
+        onPointerCancel={() => setPanStart(null)}
       >
         <defs>
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -1233,8 +1296,32 @@ function PlanningEditor({
           y={padding.top}
           width={plotWidth}
           height={plotHeight}
+          className={panStart ? "viewport-background panning" : "viewport-background"}
           fill="url(#grid)"
           stroke="#d2dbd4"
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              return;
+            }
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setPanStart({
+              pointerId: event.pointerId,
+              clientX: event.clientX,
+              centerOffsetS: viewCenterOffsetS,
+            });
+          }}
+          onPointerMove={(event) => {
+            if (!panStart || panStart.pointerId !== event.pointerId || event.buttons !== 1) {
+              return;
+            }
+            applyPan(event.clientX, event.currentTarget.getBoundingClientRect().width);
+          }}
+          onPointerUp={(event) => {
+            if (panStart?.pointerId === event.pointerId) {
+              setPanStart(null);
+            }
+          }}
+          onPointerCancel={() => setPanStart(null)}
         />
         <line x1={padding.left} y1={yForR(0)} x2={padding.left + plotWidth} y2={yForR(0)} className="axis-line" />
         <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + plotHeight} className="axis-line" />

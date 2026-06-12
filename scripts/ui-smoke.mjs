@@ -80,6 +80,40 @@ try {
   await page.locator(".viewport-controls").getByLabel("Pan right").click();
   await page.locator(".viewport-controls").getByLabel("Fit stack").click();
   await page.getByText("1.0x").waitFor();
+  const viewportBackground = page.locator(".viewport-background");
+  const viewportBox = await viewportBackground.boundingBox();
+  assert(viewportBox !== null, "expected viewport background to be measurable");
+  const zoomAnchorLabel = page.locator("svg text").filter({ hasText: "20T spur gear" }).first();
+  const zoomAnchorBefore = await zoomAnchorLabel.boundingBox();
+  assert(zoomAnchorBefore !== null, "expected gear label to be measurable before cursor zoom");
+  const zoomCursorX = zoomAnchorBefore.x + zoomAnchorBefore.width / 2;
+  const zoomCursorY = zoomAnchorBefore.y + zoomAnchorBefore.height / 2;
+  await page.mouse.move(zoomCursorX, zoomCursorY);
+  await page.mouse.wheel(0, -500);
+  await page.getByText("1.2x").waitFor();
+  const zoomAnchorAfter = await zoomAnchorLabel.boundingBox();
+  assert(zoomAnchorAfter !== null, "expected gear label to be measurable after cursor zoom");
+  const zoomAnchorDeltaX = Math.abs((zoomAnchorAfter.x + zoomAnchorAfter.width / 2) - zoomCursorX);
+  assert(
+    zoomAnchorDeltaX <= 8,
+    `expected cursor zoom to preserve model position under cursor, got x delta ${zoomAnchorDeltaX.toFixed(2)} px`,
+  );
+  const panStartX = viewportBox.x + viewportBox.width * 0.55;
+  const panStartY = viewportBox.y + viewportBox.height - 12;
+  const panAnchorBefore = await zoomAnchorLabel.boundingBox();
+  assert(panAnchorBefore !== null, "expected gear label to be measurable before background pan");
+  await page.mouse.move(panStartX, panStartY);
+  await page.keyboard.down("Shift");
+  await page.mouse.down();
+  await page.mouse.move(panStartX + 90, panStartY, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  const panAnchorAfter = await zoomAnchorLabel.boundingBox();
+  assert(panAnchorAfter !== null, "expected gear label to be measurable after background pan");
+  const panDeltaX = (panAnchorAfter.x + panAnchorAfter.width / 2) - (panAnchorBefore.x + panAnchorBefore.width / 2);
+  assert(panDeltaX > 20, `expected drag panning to move model right, got x delta ${panDeltaX.toFixed(2)} px`);
+  await page.locator(".viewport-controls").getByLabel("Fit stack").click();
+  await page.getByText("1.0x").waitFor();
 
   const regionCount = await page.locator(".region-polygon").count();
   const vertexCount = await page.locator(".vertex-handle").count();

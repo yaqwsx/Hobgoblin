@@ -472,6 +472,14 @@ button {
   font-size: 12px;
 }
 
+.viewport-background {
+  cursor: grab;
+}
+
+.viewport-background.panning {
+  cursor: grabbing;
+}
+
 .datum-marker line {
   stroke: #8a5a22;
   stroke-width: 1.5;
