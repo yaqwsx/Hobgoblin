@@ -20,10 +20,14 @@ try {
   const regionCount = await page.locator(".region-polygon").count();
   const vertexCount = await page.locator(".vertex-handle").count();
   const axisHandleCount = await page.locator(".axis-handle").count();
+  const protectedIntervalCount = await page.locator(".protected").count();
   if (regionCount < 2 || vertexCount < 8 || axisHandleCount < 8) {
     throw new Error(
       `expected planning polygons and handles, got regions=${regionCount} vertices=${vertexCount} axisHandles=${axisHandleCount}`,
     );
+  }
+  if (protectedIntervalCount < 2) {
+    throw new Error(`expected chuck and tailstock protected intervals, got ${protectedIntervalCount}`);
   }
 
   await page.locator(".region-polygon").nth(1).click();

@@ -549,13 +549,28 @@ function PlanningEditor({
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const spans = useMemo(() => stackSpans(project), [project]);
+  const stockStartS = project.project.datum.s_offset_mm;
+  const stockEndS = stockStartS + project.stock.length_mm;
+  const protectedIntervals = project.setup.protected_intervals ?? [];
+  const planningRegions = project.planning_regions ?? [];
   const maxProfileRadius = Math.max(
     project.stock.diameter_mm / 2,
     ...spans.map((span) => radiusForItem(span.item)),
-    ...(project.planning_regions ?? []).flatMap((region) => region.polygon.map((point) => point.r_mm)),
+    ...planningRegions.flatMap((region) => region.polygon.map((point) => point.r_mm)),
   );
-  const minS = project.project.datum.s_offset_mm;
-  const maxS = project.project.datum.s_offset_mm + project.stock.length_mm;
+  const minS = Math.min(
+    stockStartS,
+    ...spans.map((span) => span.startS),
+    ...protectedIntervals.map((interval) => interval.start_s_mm),
+    ...planningRegions.flatMap((region) => region.polygon.map((point) => point.s_mm)),
+  );
+  const maxS = Math.max(
+    stockEndS,
+    ...spans.map((span) => span.endS),
+    ...protectedIntervals.map((interval) => interval.end_s_mm),
+    ...planningRegions.flatMap((region) => region.polygon.map((point) => point.s_mm)),
+  );
+  const sRange = Math.max(1, maxS - minS);
   const maxR = Math.max(1, maxProfileRadius);
   const viewWidth = 1000;
   const viewHeight = 420;
@@ -563,9 +578,9 @@ function PlanningEditor({
   const plotWidth = viewWidth - padding.left - padding.right;
   const plotHeight = viewHeight - padding.top - padding.bottom;
 
-  const xForS = (sMm: number) => padding.left + ((sMm - minS) / (maxS - minS)) * plotWidth;
+  const xForS = (sMm: number) => padding.left + ((sMm - minS) / sRange) * plotWidth;
   const yForR = (rMm: number) => padding.top + (1 - rMm / maxR) * plotHeight;
-  const sForX = (x: number) => minS + ((x - padding.left) / plotWidth) * (maxS - minS);
+  const sForX = (x: number) => minS + ((x - padding.left) / plotWidth) * sRange;
   const rForY = (y: number) => (1 - (y - padding.top) / plotHeight) * maxR;
   const clampPoint = (point: PointSr): PointSr => ({
     s_mm: Math.min(maxS, Math.max(minS, point.s_mm)),
@@ -629,15 +644,15 @@ function PlanningEditor({
         <text x={12} y={padding.top + 14} className="axis-label">r / mm</text>
 
         <rect
-          x={xForS(minS)}
+          x={xForS(stockStartS)}
           y={yForR(project.stock.diameter_mm / 2)}
-          width={xForS(maxS) - xForS(minS)}
+          width={xForS(stockEndS) - xForS(stockStartS)}
           height={yForR(0) - yForR(project.stock.diameter_mm / 2)}
           className="stock-rect"
           onClick={() => onSelect(project.stock.id)}
         />
 
-        {project.setup.protected_intervals?.map((interval) => {
+        {protectedIntervals.map((interval) => {
           const visibleStartS = Math.max(minS, interval.start_s_mm);
           const visibleEndS = Math.min(maxS, interval.end_s_mm);
           if (visibleEndS <= visibleStartS) {
@@ -691,7 +706,7 @@ function PlanningEditor({
           );
         })}
 
-        {(project.planning_regions ?? []).map((region) => {
+        {planningRegions.map((region) => {
           const bounds = regionBounds(region);
           const points = region.polygon.map((point) => `${xForS(point.s_mm)},${yForR(point.r_mm)}`).join(" ");
           return (
@@ -708,6 +723,7 @@ function PlanningEditor({
                   xForS={xForS}
                   yForR={yForR}
                   eventPoint={eventPoint}
+                  onSelect={onSelect}
                   onResize={onResizeAxisAlignedRegion}
                 />
               ) : null}
@@ -833,6 +849,7 @@ function AxisAlignedHandles({
   xForS,
   yForR,
   eventPoint,
+  onSelect,
   onResize,
 }: {
   region: PlanningRegion;
@@ -840,6 +857,7 @@ function AxisAlignedHandles({
   xForS: (sMm: number) => number;
   yForR: (rMm: number) => number;
   eventPoint: (event: React.PointerEvent<SVGElement>) => PointSr;
+  onSelect: (objectId: string) => void;
   onResize: (regionId: string, bounds: RegionBounds) => void;
 }) {
   const handles = [
@@ -859,7 +877,10 @@ function AxisAlignedHandles({
           height="12"
           rx="2"
           className="axis-handle"
-          onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            onSelect(region.id);
+          }}
           onPointerMove={(event) => {
             if (event.buttons !== 1) {
               return;

@@ -26,11 +26,31 @@ export function radiusForItem(item: StackItem): number {
   if (typeof item.radius_mm === "number") {
     return item.radius_mm;
   }
-  if (item.type === "spur_gear" && typeof item.module_mm === "number" && typeof item.tooth_count === "number") {
-    const addendumCoeff = typeof item.addendum_coeff === "number" ? item.addendum_coeff : 1.0;
-    return (item.module_mm * item.tooth_count) / 2.0 + item.module_mm * addendumCoeff;
+  if (item.type === "spur_gear") {
+    return radiusForSpurLike(item);
+  }
+  if (item.type === "helical_gear") {
+    return radiusForSpurLike(objectValue(item.spur));
+  }
+  if (item.type === "herringbone_gear") {
+    return Math.max(
+      radiusForSpurLike(objectValue(objectValue(item.left)?.spur)),
+      radiusForSpurLike(objectValue(objectValue(item.right)?.spur)),
+    );
   }
   return 0;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function radiusForSpurLike(gear: Record<string, unknown> | null): number {
+  if (!gear || typeof gear.module_mm !== "number" || typeof gear.tooth_count !== "number") {
+    return 0;
+  }
+  const addendumCoeff = typeof gear.addendum_coeff === "number" ? gear.addendum_coeff : 1.0;
+  return (gear.module_mm * gear.tooth_count) / 2.0 + gear.module_mm * addendumCoeff;
 }
 
 export function regionBounds(region: PlanningRegion): RegionBounds | null {
