@@ -120,6 +120,7 @@ dependencies = [
  "hobgoblin-gear",
  "hobgoblin-planner",
  "hobgoblin-post",
+ "hobgoblin-sim",
  "serde",
  "serde_json",
 ]
@@ -157,6 +158,16 @@ name = "hobgoblin-post"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "hobgoblin-sim"
+version = "0.1.0"
+dependencies = [
+ "hobgoblin-core",
+ "hobgoblin-post",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

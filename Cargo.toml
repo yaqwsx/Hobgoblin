@@ -4,6 +4,7 @@ members = [
     "crates/hobgoblin-gear",
     "crates/hobgoblin-planner",
     "crates/hobgoblin-post",
+    "crates/hobgoblin-sim",
     "crates/hobgoblin-cli",
 ]
 resolver = "2"

@@ -62,6 +62,7 @@ jobs:
 
       - name: Build sample spur shaping debug path
         run: |
+          set -o pipefail
           cargo run --locked -p hobgoblin-cli -- debug-spur-path \
             examples/projects/simple_spur_stack.hobgoblin.json \
             feature.spur_20t \
@@ -72,6 +73,20 @@ jobs:
             --tools examples/library/basic_tools.tools.json \
             --material examples/library/brass.material.json \
             | jq '{debug_step_count, move_count, adaptive_steps: .adaptive_rack_stepping.generated_step_count, adaptive_max_error_mm: .adaptive_rack_stepping.estimated_max_error_mm}'
+
+      - name: Simulate sample spur shaping debug path
+        run: |
+          set -o pipefail
+          cargo run --locked -p hobgoblin-cli -- simulate-spur-path \
+            examples/projects/simple_spur_stack.hobgoblin.json \
+            feature.spur_20t \
+            --stepping adaptive \
+            --quality draft \
+            --depth-layers 0.25 \
+            --machine examples/library/carvera_air.machine.json \
+            --tools examples/library/basic_tools.tools.json \
+            --material examples/library/brass.material.json \
+            | jq -e '{errors: [.diagnostics[] | select(.severity == "error")] | length, rapid_segments: .summary.rapid_segment_count, cut_segments: .summary.cut_segment_count} | select(.errors == 0)'
 
   json:
     name: JSON examples

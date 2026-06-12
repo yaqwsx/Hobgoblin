@@ -2,12 +2,13 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use hobgoblin_core::{
     validate_project, validate_project_with_libraries, LibrarySet, MachineProfile, Material,
-    Project, Severity, SpurGear, StackItemKind, ToolLibrary,
+    Project, Severity, SpurGear, StackItemKind, Tool, ToolLibrary,
 };
 use hobgoblin_gear::{derive_spur_dimensions, AdaptiveRackSteppingConfig, RackSteppingQuality};
 use hobgoblin_planner::{
-    build_initial_operation_graph, generate_spur_shaping_path, SpurShapingConfig,
+    build_initial_operation_graph, generate_spur_shaping_path, SpurShapingConfig, SpurShapingPath,
 };
+use hobgoblin_sim::simulate_abstract_path_with_tool;
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
@@ -33,6 +34,26 @@ enum Command {
         libraries: LibraryArgs,
     },
     DebugSpurPath {
+        project: PathBuf,
+        feature_id: String,
+        #[arg(long, default_value_t = 5, help = "Fixed-mode rack samples per tooth")]
+        rack_steps_per_tooth: u32,
+        #[arg(long, value_enum, default_value_t = RackSteppingMode::Adaptive)]
+        stepping: RackSteppingMode,
+        #[arg(long, value_enum, default_value_t = CliRackSteppingQuality::Standard)]
+        quality: CliRackSteppingQuality,
+        #[arg(long)]
+        tolerance_mm: Option<f64>,
+        #[arg(long)]
+        min_step_mm: Option<f64>,
+        #[arg(long)]
+        max_step_mm: Option<f64>,
+        #[arg(long, value_delimiter = ',', default_value = "0.25,0.5,0.75,1.0")]
+        depth_layers: Vec<f64>,
+        #[command(flatten)]
+        libraries: LibraryArgs,
+    },
+    SimulateSpurPath {
         project: PathBuf,
         feature_id: String,
         #[arg(long, default_value_t = 5, help = "Fixed-mode rack samples per tooth")]
@@ -104,6 +125,31 @@ fn main() -> Result<()> {
             depth_layers,
             libraries,
         } => debug_spur_path(
+            project,
+            feature_id,
+            DebugSpurPathOptions {
+                rack_steps_per_tooth,
+                stepping,
+                quality,
+                tolerance_mm,
+                min_step_mm,
+                max_step_mm,
+                depth_layers,
+            },
+            libraries,
+        ),
+        Command::SimulateSpurPath {
+            project,
+            feature_id,
+            rack_steps_per_tooth,
+            stepping,
+            quality,
+            tolerance_mm,
+            min_step_mm,
+            max_step_mm,
+            depth_layers,
+            libraries,
+        } => simulate_spur_path(
             project,
             feature_id,
             DebugSpurPathOptions {
@@ -231,6 +277,98 @@ fn debug_spur_path(
     options: DebugSpurPathOptions,
     libraries: LibraryArgs,
 ) -> Result<()> {
+    let generated = build_debug_spur_path(path, feature_id, options, libraries)?;
+    let output = DebugSpurPathOutput {
+        feature_id: &generated.feature_id,
+        machine_profile_id: generated.machine_profile_id.as_deref(),
+        shaft_axis: generated.shaft_axis.as_deref(),
+        virtual_rack_axis: generated.virtual_rack_axis.as_deref(),
+        radial_axis: generated.radial_axis.as_deref(),
+        rotary_axis: generated.rotary_axis.as_deref(),
+        pitch_radius_mm: generated.pitch_radius_mm,
+        selected_tool_id: generated.selected_tool_id.as_deref(),
+        debug_step_count: generated.path.debug_steps.len(),
+        move_count: generated.path.path.moves.len(),
+        config: &generated.config,
+        adaptive_rack_stepping: generated.path.adaptive_rack_stepping.as_ref(),
+        path: &generated.path.path,
+        debug_steps: &generated.path.debug_steps,
+    };
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn simulate_spur_path(
+    path: PathBuf,
+    feature_id: String,
+    options: DebugSpurPathOptions,
+    libraries: LibraryArgs,
+) -> Result<()> {
+    let generated = build_debug_spur_path(path, feature_id, options, libraries)?;
+    let result = simulate_abstract_path_with_tool(
+        &generated.project,
+        &generated.path.path,
+        generated.selected_tool.as_ref(),
+    );
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    if result.has_errors() {
+        anyhow::bail!("simulation reported errors");
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct DebugSpurPathOptions {
+    rack_steps_per_tooth: u32,
+    stepping: RackSteppingMode,
+    quality: CliRackSteppingQuality,
+    tolerance_mm: Option<f64>,
+    min_step_mm: Option<f64>,
+    max_step_mm: Option<f64>,
+    depth_layers: Vec<f64>,
+}
+
+fn build_adaptive_rack_stepping_config(
+    quality: CliRackSteppingQuality,
+    tolerance_mm: Option<f64>,
+    min_step_mm: Option<f64>,
+    max_step_mm: Option<f64>,
+) -> AdaptiveRackSteppingConfig {
+    let mut config = AdaptiveRackSteppingConfig::for_quality(quality.into());
+    if let Some(tolerance_mm) = tolerance_mm {
+        config.tolerance_mm = tolerance_mm;
+    }
+    if let Some(min_step_mm) = min_step_mm {
+        config.min_step_mm = min_step_mm;
+    }
+    if let Some(max_step_mm) = max_step_mm {
+        config.max_step_mm = max_step_mm;
+    }
+    config
+}
+
+struct GeneratedDebugSpurPath {
+    project: Project,
+    feature_id: String,
+    machine_profile_id: Option<String>,
+    shaft_axis: Option<String>,
+    virtual_rack_axis: Option<String>,
+    radial_axis: Option<String>,
+    rotary_axis: Option<String>,
+    pitch_radius_mm: f64,
+    config: SpurShapingConfig,
+    path: SpurShapingPath,
+    selected_tool_id: Option<String>,
+    selected_tool: Option<Tool>,
+}
+
+fn build_debug_spur_path(
+    path: PathBuf,
+    feature_id: String,
+    options: DebugSpurPathOptions,
+    libraries: LibraryArgs,
+) -> Result<GeneratedDebugSpurPath> {
     let project = read_project(path)?;
     let libraries = read_libraries(&libraries)?;
     let report = match &libraries {
@@ -281,6 +419,16 @@ fn debug_spur_path(
             },
             _ => anyhow::bail!("feature '{feature_id}' is not a spur gear"),
         };
+        let selected_tool_id = gear.machining.v_tool_id.clone();
+        let selected_tool = selected_tool_id.as_deref().and_then(|selected_tool_id| {
+            libraries.as_ref().and_then(|libraries| {
+                libraries
+                    .tools
+                    .iter()
+                    .find(|tool| tool.id() == selected_tool_id)
+                    .cloned()
+            })
+        });
 
         let adaptive_rack_stepping = match options.stepping {
             RackSteppingMode::Adaptive => Some(build_adaptive_rack_stepping_config(
@@ -311,58 +459,24 @@ fn debug_spur_path(
         )
         .with_context(|| format!("failed to generate debug path for feature '{feature_id}'"))?;
 
-        let output = DebugSpurPathOutput {
-            feature_id: &feature_id,
-            machine_profile_id: machine_profile.map(|profile| profile.id.as_str()),
-            shaft_axis: machine_profile.map(|profile| profile.axis_mapping.shaft_axis.as_str()),
+        return Ok(GeneratedDebugSpurPath {
+            project,
+            feature_id,
+            machine_profile_id: machine_profile.map(|profile| profile.id.clone()),
+            shaft_axis: machine_profile.map(|profile| profile.axis_mapping.shaft_axis.clone()),
             virtual_rack_axis: machine_profile
-                .map(|profile| profile.axis_mapping.virtual_rack_axis.as_str()),
-            radial_axis: machine_profile.map(|profile| profile.axis_mapping.radial_axis.as_str()),
-            rotary_axis: machine_profile.map(|profile| profile.axis_mapping.rotary_axis.as_str()),
+                .map(|profile| profile.axis_mapping.virtual_rack_axis.clone()),
+            radial_axis: machine_profile.map(|profile| profile.axis_mapping.radial_axis.clone()),
+            rotary_axis: machine_profile.map(|profile| profile.axis_mapping.rotary_axis.clone()),
             pitch_radius_mm: dimensions.pitch_radius_mm,
-            debug_step_count: result.debug_steps.len(),
-            move_count: result.path.moves.len(),
-            config: &config,
-            adaptive_rack_stepping: result.adaptive_rack_stepping.as_ref(),
-            path: &result.path,
-            debug_steps: &result.debug_steps,
-        };
-
-        println!("{}", serde_json::to_string_pretty(&output)?);
-        return Ok(());
+            config,
+            path: result,
+            selected_tool_id,
+            selected_tool,
+        });
     }
 
     anyhow::bail!("feature '{feature_id}' not found")
-}
-
-#[derive(Debug)]
-struct DebugSpurPathOptions {
-    rack_steps_per_tooth: u32,
-    stepping: RackSteppingMode,
-    quality: CliRackSteppingQuality,
-    tolerance_mm: Option<f64>,
-    min_step_mm: Option<f64>,
-    max_step_mm: Option<f64>,
-    depth_layers: Vec<f64>,
-}
-
-fn build_adaptive_rack_stepping_config(
-    quality: CliRackSteppingQuality,
-    tolerance_mm: Option<f64>,
-    min_step_mm: Option<f64>,
-    max_step_mm: Option<f64>,
-) -> AdaptiveRackSteppingConfig {
-    let mut config = AdaptiveRackSteppingConfig::for_quality(quality.into());
-    if let Some(tolerance_mm) = tolerance_mm {
-        config.tolerance_mm = tolerance_mm;
-    }
-    if let Some(min_step_mm) = min_step_mm {
-        config.min_step_mm = min_step_mm;
-    }
-    if let Some(max_step_mm) = max_step_mm {
-        config.max_step_mm = max_step_mm;
-    }
-    config
 }
 
 #[derive(Debug, Serialize)]
@@ -374,6 +488,7 @@ struct DebugSpurPathOutput<'a> {
     radial_axis: Option<&'a str>,
     rotary_axis: Option<&'a str>,
     pitch_radius_mm: f64,
+    selected_tool_id: Option<&'a str>,
     debug_step_count: usize,
     move_count: usize,
     config: &'a SpurShapingConfig,
