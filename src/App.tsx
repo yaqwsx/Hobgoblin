@@ -514,6 +514,27 @@ export function App() {
     updateProject(reorderStackItem(loaded.project, itemId, direction), `Moved ${item?.name ?? itemId}`);
   }
 
+  function moveStackItemToIndex(itemId: string, targetIndex: number) {
+    if (!loaded) {
+      return;
+    }
+    const fromIndex = loaded.project.stack.findIndex((item) => item.id === itemId);
+    if (fromIndex < 0 || targetIndex < 0 || targetIndex >= loaded.project.stack.length || fromIndex === targetIndex) {
+      return;
+    }
+    const stack = [...loaded.project.stack];
+    const [item] = stack.splice(fromIndex, 1);
+    stack.splice(targetIndex, 0, item);
+    updateProject(
+      {
+        ...loaded.project,
+        stack,
+      },
+      `Moved ${item.name}`,
+    );
+    setSelectedObjectId(item.id);
+  }
+
   function addPlanningRegion() {
     if (!loaded) {
       return;
@@ -668,6 +689,7 @@ export function App() {
               diagnostics={loaded.validation.diagnostics}
               onSelect={setSelectedObjectId}
               onMoveStackItem={moveStackItem}
+              onMoveStackItemToIndex={moveStackItemToIndex}
               onDeleteStackItem={deleteStackItem}
               onDeletePlanningRegion={deletePlanningRegion}
               onDeleteProtectedInterval={deleteProtectedInterval}
@@ -877,6 +899,7 @@ function FeatureTree({
   diagnostics,
   onSelect,
   onMoveStackItem,
+  onMoveStackItemToIndex,
   onDeleteStackItem,
   onDeletePlanningRegion,
   onDeleteProtectedInterval,
@@ -886,10 +909,13 @@ function FeatureTree({
   diagnostics: ValidationDiagnostic[];
   onSelect: (objectId: string) => void;
   onMoveStackItem: (itemId: string, direction: MoveDirection) => void;
+  onMoveStackItemToIndex: (itemId: string, targetIndex: number) => void;
   onDeleteStackItem: (itemId: string) => void;
   onDeletePlanningRegion: (regionId: string) => void;
   onDeleteProtectedInterval: (intervalId: string) => void;
 }) {
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
   const protectedIntervals = project.setup.protected_intervals ?? [];
   const planningRegions = project.planning_regions ?? [];
   const hasDiagnostics = (objectId: string) =>
@@ -931,7 +957,40 @@ function FeatureTree({
         return (
           <div
             key={item.id}
-            className={selectedObjectId === item.id ? "tree-item tree-item-with-actions selected" : "tree-item tree-item-with-actions"}
+            className={[
+              "tree-item",
+              "tree-item-with-actions",
+              selectedObjectId === item.id ? "selected" : "",
+              draggedItemId === item.id ? "dragging" : "",
+              dragOverItemId === item.id && draggedItemId !== item.id ? "drag-over" : "",
+            ].filter(Boolean).join(" ")}
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", item.id);
+              setDraggedItemId(item.id);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              setDragOverItemId(item.id);
+            }}
+            onDragLeave={() => {
+              setDragOverItemId((current) => (current === item.id ? null : current));
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const draggedId = event.dataTransfer.getData("text/plain") || draggedItemId;
+              setDraggedItemId(null);
+              setDragOverItemId(null);
+              if (draggedId) {
+                onMoveStackItemToIndex(draggedId, index);
+              }
+            }}
+            onDragEnd={() => {
+              setDraggedItemId(null);
+              setDragOverItemId(null);
+            }}
           >
             <button type="button" className="tree-item-main" onClick={() => onSelect(item.id)}>
               <span className="tree-title">

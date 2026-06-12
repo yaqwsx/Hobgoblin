@@ -164,6 +164,14 @@ try {
 
   await page.getByLabel("Move Left journal down").click();
   await page.getByText("Moved Left journal").waitFor();
+  const gearStackRows = page
+    .locator(".feature-tree .tree-section")
+    .filter({ hasText: "Gear stack" })
+    .first()
+    .locator(".tree-item-with-actions");
+  await gearStackRows.filter({ hasText: "Right journal" }).dragTo(gearStackRows.filter({ hasText: "20T spur gear" }));
+  await page.getByText("Moved Right journal").waitFor();
+  await gearStackRows.first().getByText("Right journal").waitFor();
 
   await ribbon.getByRole("button", { name: "Protect", exact: true }).click();
   await page.locator(".feature-tree").getByText("protect.manual").waitFor();
