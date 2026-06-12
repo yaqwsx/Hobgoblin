@@ -54,6 +54,10 @@ try {
     (await page.locator(".feature-tree").getByText("Stack intervals", { exact: true }).count()) === 0,
     "expected internal stack intervals to stay out of the feature browser",
   );
+  assert(
+    !(await page.locator("body").innerText()).toLowerCase().includes("stack intervals"),
+    "expected internal stack interval wording to stay out of the main designer UI",
+  );
   await page.getByText("0 errors, 0 warnings").waitFor();
   const ribbon = page.locator(".command-ribbon");
   for (const name of [

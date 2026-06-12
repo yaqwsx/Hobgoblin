@@ -9,7 +9,7 @@ The GUI, planner, and CLI depend on a stable procedural model. v0 project files 
 ### Scope
 
 - Refine `hobgoblin-core` serde structs.
-- Add validation for stack intervals, protected intervals, planning polygons, and unsupported feature warnings.
+- Add validation for derived shaft feature spans, protected intervals, planning polygons, and unsupported feature warnings.
 - Add stable diagnostic object references.
 - Add tests for valid and invalid sample projects.
 
@@ -33,4 +33,3 @@ The GUI, planner, and CLI depend on a stable procedural model. v0 project files 
 ### Dependencies
 
 - M0 scaffold.
-

@@ -297,7 +297,7 @@ fn validate(path: PathBuf, libraries: LibraryArgs) -> Result<()> {
         None => validate_project(&project),
     };
 
-    println!("stack intervals:");
+    println!("shaft feature spans:");
     for interval in &report.intervals {
         println!(
             "  {}: {:.3} mm -> {:.3} mm",
