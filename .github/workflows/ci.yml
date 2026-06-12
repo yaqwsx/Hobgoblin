@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Validate sample project
+        run: cargo run -p hobgoblin-cli -- validate examples/projects/simple_spur_stack.hobgoblin.json
+
+      - name: Build sample operation graph
+        run: cargo run -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin.json
+
+  json:
+    name: JSON examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Parse JSON examples
+        run: |
+          node - <<'NODE'
+          const fs = require("fs");
+          const files = [
+            "examples/projects/simple_spur_stack.hobgoblin.json",
+            "examples/library/carvera_air.machine.json",
+            "examples/library/basic_tools.tools.json",
+            "examples/library/brass.material.json",
+          ];
+          for (const file of files) {
+            JSON.parse(fs.readFileSync(file, "utf8"));
+            console.log(`ok ${file}`);
+          }
+          NODE
+
