@@ -768,6 +768,51 @@ button {
   font-size: 13px;
 }
 
+.library-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.library-tabs button,
+.inline-actions button {
+  min-height: 32px;
+  border: 1px solid #c7d1ca;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #273237;
+}
+
+.library-tabs button.active {
+  border-color: #3d8d6b;
+  background: #e5f4ed;
+  color: #173b30;
+  font-weight: 700;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inline-actions button {
+  padding: 0 10px;
+}
+
+.library-json {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid #bdc7be;
+  border-radius: 4px;
+  background: #fbfcf8;
+  color: #1d2528;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
 .danger-action {
   min-height: 34px;
   display: inline-flex;

@@ -88,10 +88,155 @@ type FeaturePosition = {
   end_s_mm: number;
 };
 type MoveDirection = "up" | "down";
+type InspectorMode = "project" | "library";
+type LibraryTab = "machine" | "tools" | "materials" | "exchange";
+type ToolType = "v_cutter" | "cylindrical_cutter";
+
+interface LibraryConfig {
+  machineProfiles: MachineProfile[];
+  tools: ToolDefinition[];
+  materials: MaterialDefinition[];
+}
+
+interface MachineProfile {
+  id: string;
+  name: string;
+  axis_mapping: {
+    shaft_axis: string;
+    virtual_rack_axis: string;
+    radial_axis: string;
+    rotary_axis: string;
+    rotary_sign: number;
+  };
+  limits: {
+    max_stock_diameter_mm: number;
+    max_stock_length_mm: number;
+    travel_x_mm: number;
+    travel_y_mm: number;
+    travel_z_mm: number;
+    max_spindle_rpm: number;
+  };
+  postprocessor: string;
+}
+
+interface ToolDefinition {
+  id: string;
+  type: ToolType;
+  name: string;
+  included_angle_deg?: number;
+  tip_flat_width_mm?: number;
+  max_cut_diameter_mm?: number;
+  diameter_mm?: number;
+  corner_radius_mm?: number;
+  flute_length_mm: number;
+  cutting_length_mm?: number;
+  shank_diameter_mm: number;
+  stickout_mm: number;
+  holder_diameter_mm?: number;
+  holder_length_mm?: number;
+}
+
+interface MaterialDefinition {
+  id: string;
+  name: string;
+  recipes: MaterialRecipe[];
+}
+
+interface MaterialRecipe {
+  tool_class: ToolType;
+  operation: string;
+  engagement: string;
+  feed_mm_min: number;
+  spindle_rpm: number;
+  radial_depth_per_pass_mm: number;
+}
+
 const defaultMachineId = "machine.carvera_air.default";
 const defaultMaterialId = "material.brass.generic";
 const defaultEndmillId = "tool.endmill.3mm.flat";
 const defaultVCutterId = "tool.v.60deg.3mm_flat";
+const defaultLibraryConfig: LibraryConfig = {
+  machineProfiles: [
+    {
+      id: defaultMachineId,
+      name: "Makera Carvera Air",
+      axis_mapping: {
+        shaft_axis: "X",
+        virtual_rack_axis: "Y",
+        radial_axis: "Z",
+        rotary_axis: "A",
+        rotary_sign: 1,
+      },
+      limits: {
+        max_stock_diameter_mm: 92,
+        max_stock_length_mm: 200,
+        travel_x_mm: 300,
+        travel_y_mm: 200,
+        travel_z_mm: 130,
+        max_spindle_rpm: 13000,
+      },
+      postprocessor: "carvera_air",
+    },
+  ],
+  tools: [
+    {
+      id: defaultVCutterId,
+      type: "v_cutter",
+      name: "60 degree V cutter, 0.3 mm flat",
+      included_angle_deg: 60,
+      tip_flat_width_mm: 0.3,
+      max_cut_diameter_mm: 6,
+      flute_length_mm: 8,
+      shank_diameter_mm: 3.175,
+      stickout_mm: 18,
+      holder_diameter_mm: 12,
+      holder_length_mm: 25,
+    },
+    {
+      id: defaultEndmillId,
+      type: "cylindrical_cutter",
+      name: "3 mm flat endmill",
+      diameter_mm: 3,
+      corner_radius_mm: 0,
+      flute_length_mm: 10,
+      cutting_length_mm: 10,
+      shank_diameter_mm: 3.175,
+      stickout_mm: 18,
+    },
+  ],
+  materials: [
+    {
+      id: defaultMaterialId,
+      name: "Generic brass",
+      recipes: [
+        {
+          tool_class: "v_cutter",
+          operation: "roughing",
+          engagement: "full_width_generate",
+          feed_mm_min: 80,
+          spindle_rpm: 12000,
+          radial_depth_per_pass_mm: 0.1,
+        },
+        {
+          tool_class: "v_cutter",
+          operation: "flank_generation",
+          engagement: "side_flank_generate",
+          feed_mm_min: 160,
+          spindle_rpm: 12000,
+          radial_depth_per_pass_mm: 0.05,
+        },
+        {
+          tool_class: "cylindrical_cutter",
+          operation: "surface_finishing",
+          engagement: "cylindrical_surface",
+          feed_mm_min: 250,
+          spindle_rpm: 12000,
+          radial_depth_per_pass_mm: 0.2,
+        },
+      ],
+    },
+  ],
+};
 
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -104,6 +249,13 @@ export function App() {
   const [measurementAnchors, setMeasurementAnchors] = useState<MeasurementAnchor[]>([]);
   const [undoStack, setUndoStack] = useState<LoadedProject[]>([]);
   const [redoStack, setRedoStack] = useState<LoadedProject[]>([]);
+  const [inspectorMode, setInspectorMode] = useState<InspectorMode>("project");
+  const [library, setLibrary] = useState<LibraryConfig>(defaultLibraryConfig);
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>("machine");
+  const [selectedMachineId, setSelectedMachineId] = useState(defaultMachineId);
+  const [selectedToolId, setSelectedToolId] = useState(defaultVCutterId);
+  const [selectedMaterialId, setSelectedMaterialId] = useState(defaultMaterialId);
+  const [libraryJson, setLibraryJson] = useState(() => JSON.stringify(defaultLibraryConfig, null, 2));
 
   const selectedFeature = useMemo(() => {
     if (!loaded || !selectedObjectId) {
@@ -157,6 +309,9 @@ export function App() {
       warnings: diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length,
     };
   }, [loaded]);
+  const machineOptions = library.machineProfiles.map((profile) => profile.id);
+  const toolOptions = library.tools.map((tool) => tool.id);
+  const materialOptions = library.materials.map((material) => material.id);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -164,6 +319,19 @@ export function App() {
       void loadSampleProject();
     }
   }, []);
+
+  useEffect(() => {
+    if (!loaded) {
+      return;
+    }
+    const validation = validateBrowserSource(loaded.source);
+    setLoaded((current) => (current?.source === loaded.source ? { ...current, validation } : current));
+  }, [library]);
+
+  function selectProjectObject(objectId: string) {
+    setInspectorMode("project");
+    setSelectedObjectId(objectId);
+  }
 
   async function openFromPath() {
     if (!isTauriRuntime()) {
@@ -278,10 +446,24 @@ export function App() {
   }
 
   async function validateSource(source: string) {
-    if (isTauriRuntime()) {
-      return validateProjectSource(source);
+    const validation = isTauriRuntime() ? await validateProjectSource(source) : validateProjectInBrowser(source);
+    return appendLibraryDiagnostics(source, validation);
+  }
+
+  function validateBrowserSource(source: string) {
+    return appendLibraryDiagnostics(source, validateProjectInBrowser(source));
+  }
+
+  function appendLibraryDiagnostics(source: string, validation: ValidationResponse): ValidationResponse {
+    try {
+      const project = parseProjectSource(source).project;
+      return {
+        ...validation,
+        diagnostics: [...validation.diagnostics, ...libraryDiagnostics(project, library)],
+      };
+    } catch {
+      return validation;
     }
-    return validateProjectInBrowser(source);
   }
 
   function applyLoadedSource(source: string, validation: ValidationResponse, pathLabel: string) {
@@ -312,7 +494,7 @@ export function App() {
           ],
           intervals: loaded?.validation.intervals ?? [],
         }
-      : validateProjectInBrowser(source);
+      : validateBrowserSource(source);
     if (loaded) {
       setUndoStack((history) => [...history.slice(-19), loaded]);
       setRedoStack([]);
@@ -327,14 +509,108 @@ export function App() {
     if (isDesktopRuntime) {
       void validateProjectSource(source)
         .then((nextValidation) => {
+          const refreshedValidation = appendLibraryDiagnostics(source, nextValidation);
           setLoaded((current) =>
-            current?.source === source ? { ...current, validation: nextValidation } : current,
+            current?.source === source ? { ...current, validation: refreshedValidation } : current,
           );
           setStatus(`${statusMessage}; validation refreshed`);
         })
         .catch((error) => {
           setStatus(errorMessage(error));
         });
+    }
+  }
+
+  function updateMachineProfile(profileId: string, updater: (profile: MachineProfile) => MachineProfile) {
+    setLibrary((current) => ({
+      ...current,
+      machineProfiles: current.machineProfiles.map((profile) =>
+        profile.id === profileId ? updater(profile) : profile,
+      ),
+    }));
+    setStatus(`Edited ${profileId}`);
+  }
+
+  function updateTool(toolId: string, updater: (tool: ToolDefinition) => ToolDefinition) {
+    setLibrary((current) => ({
+      ...current,
+      tools: current.tools.map((tool) => (tool.id === toolId ? updater(tool) : tool)),
+    }));
+    setStatus(`Edited ${toolId}`);
+  }
+
+  function updateMaterial(materialId: string, updater: (material: MaterialDefinition) => MaterialDefinition) {
+    setLibrary((current) => ({
+      ...current,
+      materials: current.materials.map((material) =>
+        material.id === materialId ? updater(material) : material,
+      ),
+    }));
+    setStatus(`Edited ${materialId}`);
+  }
+
+  function addLibraryTool(type: ToolType) {
+    setLibrary((current) => {
+      const prefix = type === "v_cutter" ? "tool.v.manual" : "tool.endmill.manual";
+      const existingIds = new Set(current.tools.map((tool) => tool.id));
+      let suffix = 1;
+      let id = prefix;
+      while (existingIds.has(id)) {
+        suffix += 1;
+        id = `${prefix}_${suffix}`;
+      }
+      const tool: ToolDefinition =
+        type === "v_cutter"
+          ? {
+              id,
+              type,
+              name: "Manual V cutter",
+              included_angle_deg: 60,
+              tip_flat_width_mm: 0.2,
+              max_cut_diameter_mm: 6,
+              flute_length_mm: 8,
+              shank_diameter_mm: 3.175,
+              stickout_mm: 18,
+              holder_diameter_mm: 12,
+              holder_length_mm: 25,
+            }
+          : {
+              id,
+              type,
+              name: "Manual cylindrical cutter",
+              diameter_mm: 3,
+              corner_radius_mm: 0,
+              flute_length_mm: 10,
+              cutting_length_mm: 10,
+              shank_diameter_mm: 3.175,
+              stickout_mm: 18,
+            };
+      setSelectedToolId(id);
+      setLibraryTab("tools");
+      setInspectorMode("library");
+      setStatus(`Added ${tool.name}`);
+      return { ...current, tools: [...current.tools, tool] };
+    });
+  }
+
+  function exportLibraryConfig() {
+    setLibraryJson(JSON.stringify(library, null, 2));
+    setStatus("Library JSON refreshed for export");
+  }
+
+  function importLibraryConfig() {
+    try {
+      const parsed = JSON.parse(libraryJson) as LibraryConfig;
+      if (!Array.isArray(parsed.machineProfiles) || !Array.isArray(parsed.tools) || !Array.isArray(parsed.materials)) {
+        throw new Error("Library JSON must contain machineProfiles, tools, and materials arrays");
+      }
+      setLibrary(parsed);
+      setSelectedMachineId(parsed.machineProfiles[0]?.id ?? defaultMachineId);
+      setSelectedToolId(parsed.tools[0]?.id ?? defaultVCutterId);
+      setSelectedMaterialId(parsed.materials[0]?.id ?? defaultMaterialId);
+      setStatus("Imported library JSON");
+    } catch (error) {
+      setStatus(errorMessage(error));
     }
   }
 
@@ -626,6 +902,7 @@ export function App() {
           <CommandGroup label="Inspect">
             <CommandButton icon={<CheckCircle2 aria-hidden="true" />} label="Validate" onClick={revalidate} disabled={!loaded} />
             <CommandButton icon={<Play aria-hidden="true" />} label="Preview" onClick={previewSchematic} disabled={!loaded} />
+            <CommandButton icon={<Database aria-hidden="true" />} label="Libraries" onClick={() => setInspectorMode("library")} />
             <CommandButton icon={<ArrowLeft aria-hidden="true" />} label="Undo" onClick={undoProjectEdit} disabled={!loaded || undoStack.length === 0} />
             <CommandButton icon={<ArrowRight aria-hidden="true" />} label="Redo" onClick={redoProjectEdit} disabled={!loaded || redoStack.length === 0} />
             <CommandButton icon={<Wrench aria-hidden="true" />} label="Export" disabled title="G-code export shell is tracked separately" />
@@ -689,7 +966,7 @@ export function App() {
               project={loaded.project}
               selectedObjectId={selectedObjectId}
               diagnostics={loaded.validation.diagnostics}
-              onSelect={setSelectedObjectId}
+              onSelect={selectProjectObject}
               onMoveStackItem={moveStackItem}
               onMoveStackItemToIndex={moveStackItemToIndex}
               onDeleteStackItem={deleteStackItem}
@@ -716,7 +993,7 @@ export function App() {
               selectedObjectId={selectedObjectId}
               editorMode={editorMode}
               measurementAnchors={measurementAnchors}
-              onSelect={setSelectedObjectId}
+              onSelect={selectProjectObject}
               onMeasureAnchor={handleAnchor}
               onResetMeasurement={resetMeasurement}
               onMoveRegionVertex={(regionId, vertexIndex, point) =>
@@ -759,13 +1036,33 @@ export function App() {
         </section>
 
         <aside className="inspector" aria-label="Inspector">
-          <PanelHeader title="Inspector" subtitle={selectedObjectId ?? "Nothing selected"} />
-          {loaded && selectedFeature ? (
+          <PanelHeader title={inspectorMode === "library" ? "Libraries" : "Inspector"} subtitle={inspectorMode === "library" ? libraryTab : selectedObjectId ?? "Nothing selected"} />
+          {inspectorMode === "library" ? (
+            <LibraryInspector
+              library={library}
+              tab={libraryTab}
+              selectedMachineId={selectedMachineId}
+              selectedToolId={selectedToolId}
+              selectedMaterialId={selectedMaterialId}
+              libraryJson={libraryJson}
+              onTabChange={setLibraryTab}
+              onSelectMachine={setSelectedMachineId}
+              onSelectTool={setSelectedToolId}
+              onSelectMaterial={setSelectedMaterialId}
+              onUpdateMachine={updateMachineProfile}
+              onUpdateTool={updateTool}
+              onAddTool={addLibraryTool}
+              onUpdateMaterial={updateMaterial}
+              onLibraryJsonChange={setLibraryJson}
+              onExport={exportLibraryConfig}
+              onImport={importLibraryConfig}
+            />
+          ) : loaded && selectedFeature ? (
             <FeatureInspector
               feature={selectedFeature}
               interval={selectedFeatureInterval}
               diagnostics={diagnosticsForSelection}
-              toolOptions={loaded.project.library_refs?.tool_ids ?? []}
+              toolOptions={toolOptions}
               onUpdate={(patch) => updateFeature(selectedFeature.id, patch)}
               onDelete={() => deleteStackItem(selectedFeature.id)}
               canDelete={loaded.project.stack.length > 1}
@@ -815,13 +1112,13 @@ export function App() {
           ) : loaded && selectedObjectId === loaded.project.stock.id ? (
             <StockInspector
               stock={loaded.project.stock}
-              materialOptions={loaded.project.library_refs?.material_id ? [loaded.project.library_refs.material_id] : []}
+              materialOptions={materialOptions}
               onUpdate={updateStock}
             />
           ) : loaded && selectedObjectId === loaded.project.setup.id ? (
             <SetupInspector
               setup={loaded.project.setup}
-              machineOptions={loaded.project.library_refs?.machine_profile_id ? [loaded.project.library_refs.machine_profile_id] : []}
+              machineOptions={machineOptions}
               onUpdate={updateSetup}
             />
           ) : loaded ? (
@@ -1911,6 +2208,270 @@ function FeatureInspector({
   );
 }
 
+function LibraryInspector({
+  library,
+  tab,
+  selectedMachineId,
+  selectedToolId,
+  selectedMaterialId,
+  libraryJson,
+  onTabChange,
+  onSelectMachine,
+  onSelectTool,
+  onSelectMaterial,
+  onUpdateMachine,
+  onUpdateTool,
+  onAddTool,
+  onUpdateMaterial,
+  onLibraryJsonChange,
+  onExport,
+  onImport,
+}: {
+  library: LibraryConfig;
+  tab: LibraryTab;
+  selectedMachineId: string;
+  selectedToolId: string;
+  selectedMaterialId: string;
+  libraryJson: string;
+  onTabChange: (tab: LibraryTab) => void;
+  onSelectMachine: (id: string) => void;
+  onSelectTool: (id: string) => void;
+  onSelectMaterial: (id: string) => void;
+  onUpdateMachine: (profileId: string, updater: (profile: MachineProfile) => MachineProfile) => void;
+  onUpdateTool: (toolId: string, updater: (tool: ToolDefinition) => ToolDefinition) => void;
+  onAddTool: (type: ToolType) => void;
+  onUpdateMaterial: (materialId: string, updater: (material: MaterialDefinition) => MaterialDefinition) => void;
+  onLibraryJsonChange: (value: string) => void;
+  onExport: () => void;
+  onImport: () => void;
+}) {
+  const selectedMachine = library.machineProfiles.find((profile) => profile.id === selectedMachineId) ?? library.machineProfiles[0] ?? null;
+  const selectedTool = library.tools.find((tool) => tool.id === selectedToolId) ?? library.tools[0] ?? null;
+  const selectedMaterial = library.materials.find((material) => material.id === selectedMaterialId) ?? library.materials[0] ?? null;
+  return (
+    <div className="inspector-content">
+      <div className="library-tabs" role="tablist" aria-label="Library editor sections">
+        {[
+          ["machine", "Machines"],
+          ["tools", "Tools"],
+          ["materials", "Materials"],
+          ["exchange", "Import/export"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            className={tab === value ? "active" : ""}
+            onClick={() => onTabChange(value as LibraryTab)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "machine" && selectedMachine ? (
+        <MachineLibraryEditor
+          profile={selectedMachine}
+          options={library.machineProfiles.map((profile) => profile.id)}
+          onSelect={onSelectMachine}
+          onUpdate={(updater) => onUpdateMachine(selectedMachine.id, updater)}
+        />
+      ) : null}
+      {tab === "tools" && selectedTool ? (
+        <ToolLibraryEditor
+          tool={selectedTool}
+          options={library.tools.map((tool) => tool.id)}
+          onSelect={onSelectTool}
+          onUpdate={(updater) => onUpdateTool(selectedTool.id, updater)}
+          onAddTool={onAddTool}
+        />
+      ) : null}
+      {tab === "materials" && selectedMaterial ? (
+        <MaterialLibraryEditor
+          material={selectedMaterial}
+          options={library.materials.map((material) => material.id)}
+          onSelect={onSelectMaterial}
+          onUpdate={(updater) => onUpdateMaterial(selectedMaterial.id, updater)}
+        />
+      ) : null}
+      {tab === "exchange" ? (
+        <LibraryExchangeEditor
+          libraryJson={libraryJson}
+          onLibraryJsonChange={onLibraryJsonChange}
+          onExport={onExport}
+          onImport={onImport}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MachineLibraryEditor({
+  profile,
+  options,
+  onSelect,
+  onUpdate,
+}: {
+  profile: MachineProfile;
+  options: string[];
+  onSelect: (id: string) => void;
+  onUpdate: (updater: (profile: MachineProfile) => MachineProfile) => void;
+}) {
+  return (
+    <>
+      <FieldGroup title="Machine profile">
+        <ReferenceField label="Profile" value={profile.id} options={options} onChange={onSelect} />
+        <ReadonlyField label="ID" value={profile.id} />
+        <TextField label="Name" value={profile.name} onChange={(name) => onUpdate((current) => ({ ...current, name }))} />
+        <SelectField
+          label="Postprocessor"
+          value={profile.postprocessor}
+          options={["carvera_air"]}
+          onChange={(postprocessor) => onUpdate((current) => ({ ...current, postprocessor }))}
+        />
+      </FieldGroup>
+      <FieldGroup title="Axis mapping">
+        <SelectField label="Shaft axis" value={profile.axis_mapping.shaft_axis} options={["X", "Y", "Z"]} onChange={(shaft_axis) => onUpdate((current) => ({ ...current, axis_mapping: { ...current.axis_mapping, shaft_axis } }))} />
+        <SelectField label="Virtual rack axis" value={profile.axis_mapping.virtual_rack_axis} options={["X", "Y", "Z"]} onChange={(virtual_rack_axis) => onUpdate((current) => ({ ...current, axis_mapping: { ...current.axis_mapping, virtual_rack_axis } }))} />
+        <SelectField label="Radial axis" value={profile.axis_mapping.radial_axis} options={["X", "Y", "Z"]} onChange={(radial_axis) => onUpdate((current) => ({ ...current, axis_mapping: { ...current.axis_mapping, radial_axis } }))} />
+        <SelectField label="Rotary axis" value={profile.axis_mapping.rotary_axis} options={["A", "B", "C"]} onChange={(rotary_axis) => onUpdate((current) => ({ ...current, axis_mapping: { ...current.axis_mapping, rotary_axis } }))} />
+        <NumberField label="Rotary sign" value={profile.axis_mapping.rotary_sign} onChange={(rotary_sign) => onUpdate((current) => ({ ...current, axis_mapping: { ...current.axis_mapping, rotary_sign } }))} />
+      </FieldGroup>
+      <FieldGroup title="Machine limits">
+        <NumberField label="Max stock dia mm" value={profile.limits.max_stock_diameter_mm} onChange={(max_stock_diameter_mm) => onUpdate((current) => ({ ...current, limits: { ...current.limits, max_stock_diameter_mm } }))} />
+        <NumberField label="Max stock length mm" value={profile.limits.max_stock_length_mm} onChange={(max_stock_length_mm) => onUpdate((current) => ({ ...current, limits: { ...current.limits, max_stock_length_mm } }))} />
+        <NumberField label="Travel X mm" value={profile.limits.travel_x_mm} onChange={(travel_x_mm) => onUpdate((current) => ({ ...current, limits: { ...current.limits, travel_x_mm } }))} />
+        <NumberField label="Travel Y mm" value={profile.limits.travel_y_mm} onChange={(travel_y_mm) => onUpdate((current) => ({ ...current, limits: { ...current.limits, travel_y_mm } }))} />
+        <NumberField label="Travel Z mm" value={profile.limits.travel_z_mm} onChange={(travel_z_mm) => onUpdate((current) => ({ ...current, limits: { ...current.limits, travel_z_mm } }))} />
+        <NumberField label="Max spindle RPM" value={profile.limits.max_spindle_rpm} step={100} onChange={(max_spindle_rpm) => onUpdate((current) => ({ ...current, limits: { ...current.limits, max_spindle_rpm } }))} />
+      </FieldGroup>
+    </>
+  );
+}
+
+function ToolLibraryEditor({
+  tool,
+  options,
+  onSelect,
+  onUpdate,
+  onAddTool,
+}: {
+  tool: ToolDefinition;
+  options: string[];
+  onSelect: (id: string) => void;
+  onUpdate: (updater: (tool: ToolDefinition) => ToolDefinition) => void;
+  onAddTool: (type: ToolType) => void;
+}) {
+  return (
+    <>
+      <FieldGroup title="Tool">
+        <ReferenceField label="Tool" value={tool.id} options={options} onChange={onSelect} />
+        <ReadonlyField label="ID" value={tool.id} />
+        <TextField label="Name" value={tool.name} onChange={(name) => onUpdate((current) => ({ ...current, name }))} />
+        <SelectField
+          label="Type"
+          value={tool.type}
+          options={["v_cutter", "cylindrical_cutter"]}
+          onChange={(type) => onUpdate((current) => ({ ...current, type: type as ToolType }))}
+        />
+      </FieldGroup>
+      {tool.type === "v_cutter" ? (
+        <FieldGroup title="V cutter geometry">
+          <NumberField label="Included angle deg" value={tool.included_angle_deg ?? 60} onChange={(included_angle_deg) => onUpdate((current) => ({ ...current, included_angle_deg }))} />
+          <NumberField label="Tip flat mm" value={tool.tip_flat_width_mm ?? 0} onChange={(tip_flat_width_mm) => onUpdate((current) => ({ ...current, tip_flat_width_mm }))} />
+          <NumberField label="Max cut dia mm" value={tool.max_cut_diameter_mm ?? 0} onChange={(max_cut_diameter_mm) => onUpdate((current) => ({ ...current, max_cut_diameter_mm }))} />
+        </FieldGroup>
+      ) : (
+        <FieldGroup title="Cylindrical cutter geometry">
+          <NumberField label="Diameter mm" value={tool.diameter_mm ?? 0} onChange={(diameter_mm) => onUpdate((current) => ({ ...current, diameter_mm }))} />
+          <NumberField label="Corner radius mm" value={tool.corner_radius_mm ?? 0} onChange={(corner_radius_mm) => onUpdate((current) => ({ ...current, corner_radius_mm }))} />
+          <NumberField label="Cutting length mm" value={tool.cutting_length_mm ?? 0} onChange={(cutting_length_mm) => onUpdate((current) => ({ ...current, cutting_length_mm }))} />
+        </FieldGroup>
+      )}
+      <FieldGroup title="Holder and reach">
+        <NumberField label="Flute length mm" value={tool.flute_length_mm} onChange={(flute_length_mm) => onUpdate((current) => ({ ...current, flute_length_mm }))} />
+        <NumberField label="Shank dia mm" value={tool.shank_diameter_mm} onChange={(shank_diameter_mm) => onUpdate((current) => ({ ...current, shank_diameter_mm }))} />
+        <NumberField label="Stickout mm" value={tool.stickout_mm} onChange={(stickout_mm) => onUpdate((current) => ({ ...current, stickout_mm }))} />
+        <NumberField label="Holder dia mm" value={tool.holder_diameter_mm ?? 0} onChange={(holder_diameter_mm) => onUpdate((current) => ({ ...current, holder_diameter_mm }))} />
+        <NumberField label="Holder length mm" value={tool.holder_length_mm ?? 0} onChange={(holder_length_mm) => onUpdate((current) => ({ ...current, holder_length_mm }))} />
+      </FieldGroup>
+      <FieldGroup title="Add tool">
+        <div className="inline-actions">
+          <button type="button" onClick={() => onAddTool("v_cutter")}>Add V-cutter</button>
+          <button type="button" onClick={() => onAddTool("cylindrical_cutter")}>Add cylindrical</button>
+        </div>
+      </FieldGroup>
+    </>
+  );
+}
+
+function MaterialLibraryEditor({
+  material,
+  options,
+  onSelect,
+  onUpdate,
+}: {
+  material: MaterialDefinition;
+  options: string[];
+  onSelect: (id: string) => void;
+  onUpdate: (updater: (material: MaterialDefinition) => MaterialDefinition) => void;
+}) {
+  return (
+    <>
+      <FieldGroup title="Material">
+        <ReferenceField label="Material" value={material.id} options={options} onChange={onSelect} />
+        <ReadonlyField label="ID" value={material.id} />
+        <TextField label="Name" value={material.name} onChange={(name) => onUpdate((current) => ({ ...current, name }))} />
+      </FieldGroup>
+      {material.recipes.map((recipe, index) => (
+        <FieldGroup key={`${material.id}-recipe-${index}`} title={`Recipe ${index + 1}`}>
+          <SelectField
+            label="Tool class"
+            value={recipe.tool_class}
+            options={["v_cutter", "cylindrical_cutter"]}
+            onChange={(tool_class) => onUpdate((current) => ({
+              ...current,
+              recipes: current.recipes.map((candidate, candidateIndex) =>
+                candidateIndex === index ? { ...candidate, tool_class: tool_class as ToolType } : candidate,
+              ),
+            }))}
+          />
+          <TextField label="Operation" value={recipe.operation} onChange={(operation) => onUpdate((current) => ({ ...current, recipes: current.recipes.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, operation } : candidate) }))} />
+          <TextField label="Engagement" value={recipe.engagement} onChange={(engagement) => onUpdate((current) => ({ ...current, recipes: current.recipes.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, engagement } : candidate) }))} />
+          <NumberField label="Feed mm/min" value={recipe.feed_mm_min} onChange={(feed_mm_min) => onUpdate((current) => ({ ...current, recipes: current.recipes.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, feed_mm_min } : candidate) }))} />
+          <NumberField label="Spindle RPM" value={recipe.spindle_rpm} step={100} onChange={(spindle_rpm) => onUpdate((current) => ({ ...current, recipes: current.recipes.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, spindle_rpm } : candidate) }))} />
+          <NumberField label="Radial DOC mm" value={recipe.radial_depth_per_pass_mm} onChange={(radial_depth_per_pass_mm) => onUpdate((current) => ({ ...current, recipes: current.recipes.map((candidate, candidateIndex) => candidateIndex === index ? { ...candidate, radial_depth_per_pass_mm } : candidate) }))} />
+        </FieldGroup>
+      ))}
+    </>
+  );
+}
+
+function LibraryExchangeEditor({
+  libraryJson,
+  onLibraryJsonChange,
+  onExport,
+  onImport,
+}: {
+  libraryJson: string;
+  onLibraryJsonChange: (value: string) => void;
+  onExport: () => void;
+  onImport: () => void;
+}) {
+  return (
+    <FieldGroup title="Library JSON">
+      <textarea
+        className="library-json"
+        aria-label="Library JSON"
+        value={libraryJson}
+        onChange={(event) => onLibraryJsonChange(event.target.value)}
+      />
+      <div className="inline-actions">
+        <button type="button" onClick={onExport}>Refresh export</button>
+        <button type="button" onClick={onImport}>Import JSON</button>
+      </div>
+    </FieldGroup>
+  );
+}
+
 function FeatureTypeFields({
   feature,
   toolOptions,
@@ -2269,6 +2830,67 @@ function ProjectInspector({
       </FieldGroup>
     </div>
   );
+}
+
+function libraryDiagnostics(project: HobgoblinProject, library: LibraryConfig): ValidationDiagnostic[] {
+  const diagnostics: ValidationDiagnostic[] = [];
+  const machineIds = new Set(library.machineProfiles.map((profile) => profile.id));
+  const materialIds = new Set(library.materials.map((material) => material.id));
+  const toolIds = new Set(library.tools.map((tool) => tool.id));
+  if (!machineIds.has(project.setup.machine_profile_id)) {
+    diagnostics.push({
+      severity: "error",
+      object_id: project.setup.id,
+      message: `Machine profile ${project.setup.machine_profile_id} is not in the edited library`,
+    });
+  }
+  if (!materialIds.has(project.stock.material_id)) {
+    diagnostics.push({
+      severity: "error",
+      object_id: project.stock.id,
+      message: `Material ${project.stock.material_id} is not in the edited library`,
+    });
+  }
+  for (const toolId of project.library_refs?.tool_ids ?? []) {
+    if (!toolIds.has(toolId)) {
+      diagnostics.push({
+        severity: "error",
+        object_id: project.project.id,
+        message: `Tool ${toolId} is listed in project library refs but is not in the edited library`,
+      });
+    }
+  }
+  for (const item of project.stack) {
+    for (const toolId of toolIdsForStackItem(item)) {
+      if (!toolIds.has(toolId)) {
+        diagnostics.push({
+          severity: "error",
+          object_id: item.id,
+          message: `Tool ${toolId} is not in the edited library`,
+        });
+      }
+    }
+  }
+  return diagnostics;
+}
+
+function toolIdsForStackItem(item: StackItem): string[] {
+  const ids = new Set<string>();
+  collectToolIds(item, ids);
+  return [...ids];
+}
+
+function collectToolIds(value: unknown, ids: Set<string>) {
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key.endsWith("_tool_id") && typeof child === "string") {
+      ids.add(child);
+      continue;
+    }
+    collectToolIds(child, ids);
+  }
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
