@@ -13,6 +13,8 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 hobgoblin-core = { path = "../hobgoblin-core" }
+hobgoblin-gear = { path = "../hobgoblin-gear" }
 hobgoblin-planner = { path = "../hobgoblin-planner" }
+hobgoblin-post = { path = "../hobgoblin-post" }
 serde.workspace = true
 serde_json.workspace = true

@@ -60,6 +60,17 @@ jobs:
             --tools examples/library/basic_tools.tools.json \
             --material examples/library/brass.material.json
 
+      - name: Build sample spur shaping debug path
+        run: |
+          cargo run --locked -p hobgoblin-cli -- debug-spur-path \
+            examples/projects/simple_spur_stack.hobgoblin.json \
+            feature.spur_20t \
+            --rack-steps-per-tooth 1 \
+            --depth-layers 0.25 \
+            --machine examples/library/carvera_air.machine.json \
+            --tools examples/library/basic_tools.tools.json \
+            --material examples/library/brass.material.json
+
   json:
     name: JSON examples
     runs-on: ubuntu-latest

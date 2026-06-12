@@ -7,5 +7,6 @@ repository.workspace = true
 
 [dependencies]
 hobgoblin-core = { path = "../hobgoblin-core" }
+hobgoblin-gear = { path = "../hobgoblin-gear" }
+hobgoblin-post = { path = "../hobgoblin-post" }
 serde.workspace = true
-

@@ -117,7 +117,9 @@ dependencies = [
  "anyhow",
  "clap",
  "hobgoblin-core",
+ "hobgoblin-gear",
  "hobgoblin-planner",
+ "hobgoblin-post",
  "serde",
  "serde_json",
 ]
@@ -144,6 +146,8 @@ name = "hobgoblin-planner"
 version = "0.1.0"
 dependencies = [
  "hobgoblin-core",
+ "hobgoblin-gear",
+ "hobgoblin-post",
  "serde",
 ]
 
