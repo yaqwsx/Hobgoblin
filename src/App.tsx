@@ -1,7 +1,9 @@
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   Box,
   CheckCircle2,
   CirclePlus,
@@ -1104,7 +1106,14 @@ function PlanningEditor({
   const svgRef = useRef<SVGSVGElement>(null);
   const [viewZoom, setViewZoom] = useState(1);
   const [viewCenterOffsetS, setViewCenterOffsetS] = useState(0);
-  const [panStart, setPanStart] = useState<{ pointerId: number; clientX: number; centerOffsetS: number } | null>(null);
+  const [viewCenterOffsetR, setViewCenterOffsetR] = useState(0);
+  const [panStart, setPanStart] = useState<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    centerOffsetS: number;
+    centerOffsetR: number;
+  } | null>(null);
   const spans = useMemo(() => stackSpans(project), [project]);
   const stockStartS = project.project.datum.s_offset_mm;
   const stockEndS = stockStartS + project.stock.length_mm;
@@ -1137,7 +1146,18 @@ function PlanningEditor({
   const minS = visibleRangeS >= domainRangeS ? domainMinS : visibleCenterS - visibleRangeS / 2;
   const maxS = visibleRangeS >= domainRangeS ? domainMaxS : visibleCenterS + visibleRangeS / 2;
   const sRange = Math.max(1, maxS - minS);
-  const maxR = Math.max(1, maxProfileRadius);
+  const domainMinR = 0;
+  const domainMaxR = Math.max(1, maxProfileRadius);
+  const domainRangeR = domainMaxR - domainMinR;
+  const visibleRangeR = domainRangeR / viewZoom;
+  const domainCenterR = (domainMinR + domainMaxR) / 2;
+  const visibleCenterR = Math.min(
+    domainMaxR - visibleRangeR / 2,
+    Math.max(domainMinR + visibleRangeR / 2, domainCenterR + viewCenterOffsetR),
+  );
+  const minR = visibleRangeR >= domainRangeR ? domainMinR : visibleCenterR - visibleRangeR / 2;
+  const maxR = visibleRangeR >= domainRangeR ? domainMaxR : visibleCenterR + visibleRangeR / 2;
+  const rRange = Math.max(1, maxR - minR);
   const viewWidth = 1000;
   const viewHeight = 420;
   const padding = { left: 56, right: 24, top: 24, bottom: 50 };
@@ -1145,33 +1165,44 @@ function PlanningEditor({
   const plotHeight = viewHeight - padding.top - padding.bottom;
 
   const xForS = (sMm: number) => padding.left + ((sMm - minS) / sRange) * plotWidth;
-  const yForR = (rMm: number) => padding.top + (1 - rMm / maxR) * plotHeight;
+  const yForR = (rMm: number) => padding.top + (1 - (rMm - minR) / rRange) * plotHeight;
   const sForX = (x: number) => minS + ((x - padding.left) / plotWidth) * sRange;
-  const rForY = (y: number) => (1 - (y - padding.top) / plotHeight) * maxR;
-  const clampCenterOffset = (offsetS: number, zoom = viewZoom) => {
+  const rForY = (y: number) => minR + (1 - (y - padding.top) / plotHeight) * rRange;
+  const clampCenterOffsetS = (offsetS: number, zoom = viewZoom) => {
     const nextVisibleRangeS = domainRangeS / zoom;
     const maxOffset = Math.max(0, domainRangeS / 2 - nextVisibleRangeS / 2);
     return Math.min(maxOffset, Math.max(-maxOffset, offsetS));
   };
+  const clampCenterOffsetR = (offsetR: number, zoom = viewZoom) => {
+    const nextVisibleRangeR = domainRangeR / zoom;
+    const maxOffset = Math.max(0, domainRangeR / 2 - nextVisibleRangeR / 2);
+    return Math.min(maxOffset, Math.max(-maxOffset, offsetR));
+  };
   const clampPoint = (point: PointSr): PointSr => ({
     s_mm: Math.min(domainMaxS, Math.max(domainMinS, point.s_mm)),
-    r_mm: Math.min(maxR, Math.max(0, point.r_mm)),
+    r_mm: Math.min(domainMaxR, Math.max(domainMinR, point.r_mm)),
   });
 
   const setZoom = (nextZoom: number) => {
     const clampedZoom = Math.min(8, Math.max(1, nextZoom));
     setViewZoom(clampedZoom);
-    setViewCenterOffsetS((current) => clampCenterOffset(current, clampedZoom));
+    setViewCenterOffsetS((current) => clampCenterOffsetS(current, clampedZoom));
+    setViewCenterOffsetR((current) => clampCenterOffsetR(current, clampedZoom));
   };
-  const panView = (direction: -1 | 1) => {
+  const panView = (directionS: -1 | 0 | 1, directionR: -1 | 0 | 1) => {
     setViewCenterOffsetS((current) => {
-      const next = current + direction * visibleRangeS * 0.25;
-      return clampCenterOffset(next);
+      const next = current + directionS * visibleRangeS * 0.25;
+      return clampCenterOffsetS(next);
+    });
+    setViewCenterOffsetR((current) => {
+      const next = current + directionR * visibleRangeR * 0.25;
+      return clampCenterOffsetR(next);
     });
   };
   const fitView = () => {
     setViewZoom(1);
     setViewCenterOffsetS(0);
+    setViewCenterOffsetR(0);
   };
 
   function svgCoordinates(clientX: number, clientY: number) {
@@ -1196,21 +1227,28 @@ function PlanningEditor({
     if (clampedZoom === viewZoom) {
       return;
     }
-    const { x } = svgCoordinates(clientX, clientY);
+    const { x, y } = svgCoordinates(clientX, clientY);
     const cursorRatio = Math.min(1, Math.max(0, (x - padding.left) / plotWidth));
+    const cursorRatioY = Math.min(1, Math.max(0, (y - padding.top) / plotHeight));
     const cursorS = sForX(x);
+    const cursorR = rForY(y);
     const nextVisibleRangeS = domainRangeS / clampedZoom;
+    const nextVisibleRangeR = domainRangeR / clampedZoom;
     const nextCenterS = cursorS + (0.5 - cursorRatio) * nextVisibleRangeS;
+    const nextCenterR = cursorR + (cursorRatioY - 0.5) * nextVisibleRangeR;
     setViewZoom(clampedZoom);
-    setViewCenterOffsetS(clampedZoom <= 1 ? 0 : clampCenterOffset(nextCenterS - domainCenterS, clampedZoom));
+    setViewCenterOffsetS(clampedZoom <= 1 ? 0 : clampCenterOffsetS(nextCenterS - domainCenterS, clampedZoom));
+    setViewCenterOffsetR(clampedZoom <= 1 ? 0 : clampCenterOffsetR(nextCenterR - domainCenterR, clampedZoom));
   }
 
-  function applyPan(clientX: number, plotCssWidth: number) {
+  function applyPan(clientX: number, clientY: number, plotCssWidth: number, plotCssHeight: number) {
     if (!panStart) {
       return;
     }
     const deltaXS = ((clientX - panStart.clientX) / Math.max(1, plotCssWidth)) * visibleRangeS;
-    setViewCenterOffsetS(clampCenterOffset(panStart.centerOffsetS - deltaXS));
+    const deltaYR = ((clientY - panStart.clientY) / Math.max(1, plotCssHeight)) * visibleRangeR;
+    setViewCenterOffsetS(clampCenterOffsetS(panStart.centerOffsetS - deltaXS));
+    setViewCenterOffsetR(clampCenterOffsetR(panStart.centerOffsetR + deltaYR));
   }
 
   const measurement =
@@ -1229,11 +1267,17 @@ function PlanningEditor({
       <div className="editor-toolbar">
         <span>{editorMode === "measure" ? "Measure anchors" : "Edit geometry"} / {viewZoom.toFixed(1)}x</span>
         <div className="viewport-controls" aria-label="Viewport controls">
-          <button type="button" onClick={() => panView(-1)} disabled={viewZoom <= 1} title="Pan left" aria-label="Pan left">
+          <button type="button" onClick={() => panView(-1, 0)} disabled={viewZoom <= 1} title="Pan left" aria-label="Pan left">
             <ArrowLeft aria-hidden="true" />
           </button>
-          <button type="button" onClick={() => panView(1)} disabled={viewZoom <= 1} title="Pan right" aria-label="Pan right">
+          <button type="button" onClick={() => panView(1, 0)} disabled={viewZoom <= 1} title="Pan right" aria-label="Pan right">
             <ArrowRight aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => panView(0, 1)} disabled={viewZoom <= 1} title="Pan up" aria-label="Pan up">
+            <ArrowUp aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => panView(0, -1)} disabled={viewZoom <= 1} title="Pan down" aria-label="Pan down">
+            <ArrowDown aria-hidden="true" />
           </button>
           <button type="button" onClick={() => setZoom(viewZoom / 1.5)} disabled={viewZoom <= 1} title="Zoom out" aria-label="Zoom out">
             <ZoomOut aria-hidden="true" />
@@ -1269,7 +1313,9 @@ function PlanningEditor({
           setPanStart({
             pointerId: event.pointerId,
             clientX: event.clientX,
+            clientY: event.clientY,
             centerOffsetS: viewCenterOffsetS,
+            centerOffsetR: viewCenterOffsetR,
           });
         }}
         onPointerMove={(event) => {
@@ -1277,7 +1323,12 @@ function PlanningEditor({
             return;
           }
           const svgBounds = event.currentTarget.getBoundingClientRect();
-          applyPan(event.clientX, svgBounds.width * (plotWidth / viewWidth));
+          applyPan(
+            event.clientX,
+            event.clientY,
+            svgBounds.width * (plotWidth / viewWidth),
+            svgBounds.height * (plotHeight / viewHeight),
+          );
         }}
         onPointerUp={(event) => {
           if (panStart?.pointerId === event.pointerId) {
@@ -1307,14 +1358,17 @@ function PlanningEditor({
             setPanStart({
               pointerId: event.pointerId,
               clientX: event.clientX,
+              clientY: event.clientY,
               centerOffsetS: viewCenterOffsetS,
+              centerOffsetR: viewCenterOffsetR,
             });
           }}
           onPointerMove={(event) => {
             if (!panStart || panStart.pointerId !== event.pointerId || event.buttons !== 1) {
               return;
             }
-            applyPan(event.clientX, event.currentTarget.getBoundingClientRect().width);
+            const backgroundBounds = event.currentTarget.getBoundingClientRect();
+            applyPan(event.clientX, event.clientY, backgroundBounds.width, backgroundBounds.height);
           }}
           onPointerUp={(event) => {
             if (panStart?.pointerId === event.pointerId) {
