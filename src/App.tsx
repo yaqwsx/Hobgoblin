@@ -1,19 +1,33 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  Crosshair,
   Database,
   FileDown,
   FileUp,
   FolderOpen,
   HardDrive,
+  MousePointer2,
   Save,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  distance,
+  formatMm,
+  isAxisAlignedRectangle,
+  radiusForItem,
+  rectanglePolygon,
+  regionBounds,
+  stackSpans,
+  type RegionBounds,
+} from "./geometry";
 import {
   featureTypeLabel,
   parseProjectSource,
   validateProjectInBrowser,
   type HobgoblinProject,
+  type PlanningRegion,
+  type PointSr,
   type StackItem,
 } from "./project";
 import {
@@ -33,6 +47,12 @@ interface LoadedProject {
 }
 
 const samplePath = "examples/projects/simple_spur_stack.hobgoblin.json";
+type EditorMode = "select" | "measure";
+type MeasurementAnchor = {
+  id: string;
+  label: string;
+  point: PointSr;
+};
 
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -41,12 +61,24 @@ export function App() {
   const [loaded, setLoaded] = useState<LoadedProject | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [status, setStatus] = useState("No project loaded");
+  const [editorMode, setEditorMode] = useState<EditorMode>("select");
+  const [measurementAnchors, setMeasurementAnchors] = useState<MeasurementAnchor[]>([]);
 
   const selectedFeature = useMemo(() => {
     if (!loaded || !selectedObjectId) {
       return null;
     }
     return loaded.project.stack.find((item) => item.id === selectedObjectId) ?? null;
+  }, [loaded, selectedObjectId]);
+
+  const selectedRegion = useMemo(() => {
+    if (!loaded || !selectedObjectId) {
+      return null;
+    }
+    return (
+      (loaded.project.planning_regions ?? []).find((region) => region.id === selectedObjectId) ??
+      null
+    );
   }, [loaded, selectedObjectId]);
 
   const diagnosticsForSelection = useMemo(() => {
@@ -184,6 +216,57 @@ export function App() {
       pathLabel,
     });
     setSelectedObjectId(parsed.project.stack[0]?.id ?? parsed.project.stock.id);
+    setMeasurementAnchors([]);
+  }
+
+  function updateProject(project: HobgoblinProject, statusMessage: string) {
+    const source = JSON.stringify(project, null, 2);
+    const validation = isTauriRuntime()
+      ? loaded?.validation ?? { diagnostics: [], intervals: [] }
+      : validateProjectInBrowser(source);
+    setLoaded((current) =>
+      current
+        ? {
+            ...current,
+            source,
+            project,
+            validation,
+          }
+        : current,
+    );
+    setStatus(statusMessage);
+  }
+
+  function updatePlanningRegion(regionId: string, updater: (region: PlanningRegion) => PlanningRegion) {
+    if (!loaded) {
+      return;
+    }
+    const project = {
+      ...loaded.project,
+      planning_regions: (loaded.project.planning_regions ?? []).map((region) =>
+        region.id === regionId ? updater(region) : region,
+      ),
+    };
+    updateProject(project, `Edited ${regionId}`);
+  }
+
+  function handleAnchor(anchor: MeasurementAnchor) {
+    if (editorMode !== "measure") {
+      return;
+    }
+    setMeasurementAnchors((current) => {
+      if (current.length >= 2) {
+        return [anchor];
+      }
+      if (current.some((existing) => existing.id === anchor.id)) {
+        return current;
+      }
+      return [...current, anchor];
+    });
+  }
+
+  function resetMeasurement() {
+    setMeasurementAnchors([]);
   }
 
   return (
@@ -217,6 +300,24 @@ export function App() {
             <CheckCircle2 aria-hidden="true" />
             Validate
           </button>
+          <div className="segmented-control" aria-label="Editor mode">
+            <button
+              type="button"
+              className={editorMode === "select" ? "active" : ""}
+              onClick={() => setEditorMode("select")}
+              title="Select"
+            >
+              <MousePointer2 aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={editorMode === "measure" ? "active" : ""}
+              onClick={() => setEditorMode("measure")}
+              title="Measure"
+            >
+              <Crosshair aria-hidden="true" />
+            </button>
+          </div>
           <input
             ref={fileInputRef}
             className="visually-hidden"
@@ -273,10 +374,47 @@ export function App() {
             }
           />
           {loaded ? (
-            <ShaftPreview
+            <PlanningEditor
               project={loaded.project}
               selectedObjectId={selectedObjectId}
+              editorMode={editorMode}
+              measurementAnchors={measurementAnchors}
               onSelect={setSelectedObjectId}
+              onMeasureAnchor={handleAnchor}
+              onResetMeasurement={resetMeasurement}
+              onMoveRegionVertex={(regionId, vertexIndex, point) =>
+                updatePlanningRegion(regionId, (region) => ({
+                  ...region,
+                  polygon: region.polygon.map((candidate, index) =>
+                    index === vertexIndex ? point : candidate,
+                  ),
+                }))
+              }
+              onAddRegionVertex={(regionId, edgeIndex, point) =>
+                updatePlanningRegion(regionId, (region) => {
+                  const polygon = [...region.polygon];
+                  polygon.splice(edgeIndex + 1, 0, point);
+                  return { ...region, polygon };
+                })
+              }
+              onDeleteRegionVertex={(regionId, vertexIndex) =>
+                updatePlanningRegion(regionId, (region) => {
+                  if (region.polygon.length <= 3) {
+                    setStatus("Planning polygons need at least three vertices");
+                    return region;
+                  }
+                  return {
+                    ...region,
+                    polygon: region.polygon.filter((_, index) => index !== vertexIndex),
+                  };
+                })
+              }
+              onResizeAxisAlignedRegion={(regionId, bounds) =>
+                updatePlanningRegion(regionId, (region) => ({
+                  ...region,
+                  polygon: rectanglePolygon(bounds),
+                }))
+              }
             />
           ) : (
             <EmptyPanel message="The shaft preview appears here after loading a project." />
@@ -287,6 +425,22 @@ export function App() {
           <PanelHeader title="Inspector" subtitle={selectedObjectId ?? "Nothing selected"} />
           {loaded && selectedFeature ? (
             <FeatureInspector feature={selectedFeature} diagnostics={diagnosticsForSelection} />
+          ) : loaded && selectedRegion ? (
+            <RegionInspector
+              region={selectedRegion}
+              onDeleteVertex={(vertexIndex) =>
+                updatePlanningRegion(selectedRegion.id, (region) => {
+                  if (region.polygon.length <= 3) {
+                    setStatus("Planning polygons need at least three vertices");
+                    return region;
+                  }
+                  return {
+                    ...region,
+                    polygon: region.polygon.filter((_, index) => index !== vertexIndex),
+                  };
+                })
+              }
+            />
           ) : loaded ? (
             <ProjectInspector project={loaded.project} selectedObjectId={selectedObjectId} />
           ) : (
@@ -368,48 +522,367 @@ function FeatureTree({
   );
 }
 
-function ShaftPreview({
+function PlanningEditor({
   project,
   selectedObjectId,
+  editorMode,
+  measurementAnchors,
   onSelect,
+  onMeasureAnchor,
+  onResetMeasurement,
+  onMoveRegionVertex,
+  onAddRegionVertex,
+  onDeleteRegionVertex,
+  onResizeAxisAlignedRegion,
 }: {
   project: HobgoblinProject;
   selectedObjectId: string | null;
+  editorMode: EditorMode;
+  measurementAnchors: MeasurementAnchor[];
   onSelect: (objectId: string) => void;
+  onMeasureAnchor: (anchor: MeasurementAnchor) => void;
+  onResetMeasurement: () => void;
+  onMoveRegionVertex: (regionId: string, vertexIndex: number, point: PointSr) => void;
+  onAddRegionVertex: (regionId: string, edgeIndex: number, point: PointSr) => void;
+  onDeleteRegionVertex: (regionId: string, vertexIndex: number) => void;
+  onResizeAxisAlignedRegion: (regionId: string, bounds: RegionBounds) => void;
 }) {
-  const totalLength = project.stock.length_mm;
+  const svgRef = useRef<SVGSVGElement>(null);
+  const spans = useMemo(() => stackSpans(project), [project]);
+  const maxProfileRadius = Math.max(
+    project.stock.diameter_mm / 2,
+    ...spans.map((span) => radiusForItem(span.item)),
+    ...(project.planning_regions ?? []).flatMap((region) => region.polygon.map((point) => point.r_mm)),
+  );
+  const minS = project.project.datum.s_offset_mm;
+  const maxS = project.project.datum.s_offset_mm + project.stock.length_mm;
+  const maxR = Math.max(1, maxProfileRadius);
+  const viewWidth = 1000;
+  const viewHeight = 420;
+  const padding = { left: 56, right: 24, top: 24, bottom: 50 };
+  const plotWidth = viewWidth - padding.left - padding.right;
+  const plotHeight = viewHeight - padding.top - padding.bottom;
+
+  const xForS = (sMm: number) => padding.left + ((sMm - minS) / (maxS - minS)) * plotWidth;
+  const yForR = (rMm: number) => padding.top + (1 - rMm / maxR) * plotHeight;
+  const sForX = (x: number) => minS + ((x - padding.left) / plotWidth) * (maxS - minS);
+  const rForY = (y: number) => (1 - (y - padding.top) / plotHeight) * maxR;
+  const clampPoint = (point: PointSr): PointSr => ({
+    s_mm: Math.min(maxS, Math.max(minS, point.s_mm)),
+    r_mm: Math.min(maxR, Math.max(0, point.r_mm)),
+  });
+
+  function eventPoint(event: React.PointerEvent<SVGElement>): PointSr {
+    const svg = svgRef.current;
+    if (!svg) {
+      return { s_mm: minS, r_mm: 0 };
+    }
+    const rect = svg.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * viewWidth;
+    const y = ((event.clientY - rect.top) / rect.height) * viewHeight;
+    return clampPoint({ s_mm: sForX(x), r_mm: rForY(y) });
+  }
+
+  const measurement =
+    measurementAnchors.length === 2
+      ? {
+          a: measurementAnchors[0],
+          b: measurementAnchors[1],
+          ds: measurementAnchors[1].point.s_mm - measurementAnchors[0].point.s_mm,
+          dr: measurementAnchors[1].point.r_mm - measurementAnchors[0].point.r_mm,
+          distance: distance(measurementAnchors[0].point, measurementAnchors[1].point),
+        }
+      : null;
+
   return (
-    <div className="shaft-preview">
-      <div className="shaft-axis">
-        {project.stack.map((item) => {
-          const width = `${Math.max(4, (item.length_mm / totalLength) * 100)}%`;
+    <div className="planning-editor">
+      <div className="editor-toolbar">
+        <span>{editorMode === "measure" ? "Measure anchors" : "Edit geometry"}</span>
+        <button type="button" onClick={onResetMeasurement} disabled={measurementAnchors.length === 0}>
+          <Crosshair aria-hidden="true" />
+          Clear
+        </button>
+      </div>
+      <svg
+        ref={svgRef}
+        className="planning-svg"
+        viewBox={`0 0 ${viewWidth} ${viewHeight}`}
+        role="img"
+        aria-label="2D shaft and planning editor"
+      >
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5ebe4" strokeWidth="1" />
+          </pattern>
+        </defs>
+        <rect
+          x={padding.left}
+          y={padding.top}
+          width={plotWidth}
+          height={plotHeight}
+          fill="url(#grid)"
+          stroke="#d2dbd4"
+        />
+        <line x1={padding.left} y1={yForR(0)} x2={padding.left + plotWidth} y2={yForR(0)} className="axis-line" />
+        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + plotHeight} className="axis-line" />
+        <text x={padding.left} y={viewHeight - 12} className="axis-label">s / mm</text>
+        <text x={12} y={padding.top + 14} className="axis-label">r / mm</text>
+
+        <rect
+          x={xForS(minS)}
+          y={yForR(project.stock.diameter_mm / 2)}
+          width={xForS(maxS) - xForS(minS)}
+          height={yForR(0) - yForR(project.stock.diameter_mm / 2)}
+          className="stock-rect"
+          onClick={() => onSelect(project.stock.id)}
+        />
+
+        {project.setup.protected_intervals?.map((interval) => {
+          const visibleStartS = Math.max(minS, interval.start_s_mm);
+          const visibleEndS = Math.min(maxS, interval.end_s_mm);
+          if (visibleEndS <= visibleStartS) {
+            return null;
+          }
           return (
-            <button
-              type="button"
-              key={item.id}
-              style={{ width }}
-              className={selectedObjectId === item.id ? "shaft-segment selected" : "shaft-segment"}
-              onClick={() => onSelect(item.id)}
-              title={`${item.name}: ${item.length_mm} mm`}
-            >
-              <span>{item.name}</span>
-            </button>
+            <g key={interval.id} onClick={() => onSelect(interval.id)}>
+              <rect
+                x={xForS(visibleStartS)}
+                y={padding.top}
+                width={xForS(visibleEndS) - xForS(visibleStartS)}
+                height={plotHeight}
+                className={selectedObjectId === interval.id ? "protected selected" : "protected"}
+              />
+              <text x={xForS(visibleStartS) + 4} y={padding.top + 16} className="protected-label">
+                {interval.purpose}
+              </text>
+            </g>
           );
         })}
-      </div>
-      <div className="planning-strip">
-        {(project.planning_regions ?? []).map((region) => (
-          <button
-            type="button"
-            key={region.id}
-            className="planning-region"
-            onClick={() => onSelect(region.id)}
-          >
-            {region.name}
-          </button>
-        ))}
+
+        {spans.map((span) => {
+          const radius = radiusForItem(span.item);
+          return (
+            <g key={span.item.id}>
+              <rect
+                x={xForS(span.startS)}
+                y={yForR(radius)}
+                width={xForS(span.endS) - xForS(span.startS)}
+                height={yForR(0) - yForR(radius)}
+                className={selectedObjectId === span.item.id ? "profile selected" : "profile"}
+                onClick={() => onSelect(span.item.id)}
+              />
+              <text x={(xForS(span.startS) + xForS(span.endS)) / 2} y={yForR(radius) - 7} className="feature-label">
+                {span.item.name}
+              </text>
+              {[
+                { id: `${span.item.id}:start`, label: `${span.item.name} start`, point: { s_mm: span.startS, r_mm: radius } },
+                { id: `${span.item.id}:end`, label: `${span.item.name} end`, point: { s_mm: span.endS, r_mm: radius } },
+              ].map((anchor) => (
+                <circle
+                  key={anchor.id}
+                  cx={xForS(anchor.point.s_mm)}
+                  cy={yForR(anchor.point.r_mm)}
+                  r="5"
+                  className="measure-anchor"
+                  onClick={() => onMeasureAnchor(anchor)}
+                />
+              ))}
+            </g>
+          );
+        })}
+
+        {(project.planning_regions ?? []).map((region) => {
+          const bounds = regionBounds(region);
+          const points = region.polygon.map((point) => `${xForS(point.s_mm)},${yForR(point.r_mm)}`).join(" ");
+          return (
+            <g key={region.id} className="planning-region-layer">
+              <polygon
+                points={points}
+                className={selectedObjectId === region.id ? "region-polygon selected" : "region-polygon"}
+                onClick={() => onSelect(region.id)}
+              />
+              {bounds && isAxisAlignedRectangle(region) ? (
+                <AxisAlignedHandles
+                  region={region}
+                  bounds={bounds}
+                  xForS={xForS}
+                  yForR={yForR}
+                  eventPoint={eventPoint}
+                  onResize={onResizeAxisAlignedRegion}
+                />
+              ) : null}
+              {region.polygon.map((point, vertexIndex) => (
+                <RegionVertexHandle
+                  key={`${region.id}-${vertexIndex}`}
+                  region={region}
+                  vertexIndex={vertexIndex}
+                  point={point}
+                  xForS={xForS}
+                  yForR={yForR}
+                  eventPoint={eventPoint}
+                  onSelect={onSelect}
+                  onMove={onMoveRegionVertex}
+                  onDelete={onDeleteRegionVertex}
+                  onMeasureAnchor={onMeasureAnchor}
+                />
+              ))}
+              {region.polygon.map((point, edgeIndex) => {
+                const next = region.polygon[(edgeIndex + 1) % region.polygon.length];
+                const midpoint = {
+                  s_mm: (point.s_mm + next.s_mm) / 2,
+                  r_mm: (point.r_mm + next.r_mm) / 2,
+                };
+                return (
+                  <circle
+                    key={`${region.id}-edge-${edgeIndex}`}
+                    cx={xForS(midpoint.s_mm)}
+                    cy={yForR(midpoint.r_mm)}
+                    r="5"
+                    className="edge-add-handle"
+                    onClick={() => {
+                      onSelect(region.id);
+                      onAddRegionVertex(region.id, edgeIndex, midpoint);
+                    }}
+                  />
+                );
+              })}
+            </g>
+          );
+        })}
+
+        {measurement ? (
+          <g className="measurement-overlay">
+            <line
+              x1={xForS(measurement.a.point.s_mm)}
+              y1={yForR(measurement.a.point.r_mm)}
+              x2={xForS(measurement.b.point.s_mm)}
+              y2={yForR(measurement.b.point.r_mm)}
+            />
+            <text
+              x={(xForS(measurement.a.point.s_mm) + xForS(measurement.b.point.s_mm)) / 2}
+              y={(yForR(measurement.a.point.r_mm) + yForR(measurement.b.point.r_mm)) / 2 - 10}
+            >
+              d {formatMm(measurement.distance)} / ds {formatMm(measurement.ds)} / dr {formatMm(measurement.dr)}
+            </text>
+          </g>
+        ) : null}
+      </svg>
+      <div className="measurement-readout">
+        {measurementAnchors.length === 0
+          ? "No measurement anchors selected"
+          : measurementAnchors.map((anchor) => `${anchor.label}: s ${formatMm(anchor.point.s_mm)}, r ${formatMm(anchor.point.r_mm)}`).join(" | ")}
       </div>
     </div>
+  );
+}
+
+function RegionVertexHandle({
+  region,
+  vertexIndex,
+  point,
+  xForS,
+  yForR,
+  eventPoint,
+  onSelect,
+  onMove,
+  onDelete,
+  onMeasureAnchor,
+}: {
+  region: PlanningRegion;
+  vertexIndex: number;
+  point: PointSr;
+  xForS: (sMm: number) => number;
+  yForR: (rMm: number) => number;
+  eventPoint: (event: React.PointerEvent<SVGElement>) => PointSr;
+  onSelect: (objectId: string) => void;
+  onMove: (regionId: string, vertexIndex: number, point: PointSr) => void;
+  onDelete: (regionId: string, vertexIndex: number) => void;
+  onMeasureAnchor: (anchor: MeasurementAnchor) => void;
+}) {
+  return (
+    <circle
+      cx={xForS(point.s_mm)}
+      cy={yForR(point.r_mm)}
+      r="7"
+      className="vertex-handle"
+      onClick={() => {
+        onSelect(region.id);
+        onMeasureAnchor({
+          id: `${region.id}:v${vertexIndex}`,
+          label: `${region.name} v${vertexIndex + 1}`,
+          point,
+        });
+      }}
+      onDoubleClick={() => onDelete(region.id, vertexIndex)}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onSelect(region.id);
+      }}
+      onPointerMove={(event) => {
+        if (event.buttons === 1) {
+          onMove(region.id, vertexIndex, eventPoint(event));
+        }
+      }}
+    />
+  );
+}
+
+function AxisAlignedHandles({
+  region,
+  bounds,
+  xForS,
+  yForR,
+  eventPoint,
+  onResize,
+}: {
+  region: PlanningRegion;
+  bounds: RegionBounds;
+  xForS: (sMm: number) => number;
+  yForR: (rMm: number) => number;
+  eventPoint: (event: React.PointerEvent<SVGElement>) => PointSr;
+  onResize: (regionId: string, bounds: RegionBounds) => void;
+}) {
+  const handles = [
+    { id: "left", x: xForS(bounds.minS), y: yForR((bounds.minR + bounds.maxR) / 2) },
+    { id: "right", x: xForS(bounds.maxS), y: yForR((bounds.minR + bounds.maxR) / 2) },
+    { id: "top", x: xForS((bounds.minS + bounds.maxS) / 2), y: yForR(bounds.maxR) },
+    { id: "bottom", x: xForS((bounds.minS + bounds.maxS) / 2), y: yForR(bounds.minR) },
+  ];
+  return (
+    <>
+      {handles.map((handle) => (
+        <rect
+          key={`${region.id}-${handle.id}`}
+          x={handle.x - 6}
+          y={handle.y - 6}
+          width="12"
+          height="12"
+          rx="2"
+          className="axis-handle"
+          onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
+          onPointerMove={(event) => {
+            if (event.buttons !== 1) {
+              return;
+            }
+            const point = eventPoint(event);
+            const next = { ...bounds };
+            if (handle.id === "left") {
+              next.minS = Math.min(point.s_mm, bounds.maxS - 0.1);
+            }
+            if (handle.id === "right") {
+              next.maxS = Math.max(point.s_mm, bounds.minS + 0.1);
+            }
+            if (handle.id === "top") {
+              next.maxR = Math.max(point.r_mm, bounds.minR + 0.1);
+            }
+            if (handle.id === "bottom") {
+              next.minR = Math.min(point.r_mm, bounds.maxR - 0.1);
+            }
+            onResize(region.id, next);
+          }}
+        />
+      ))}
+    </>
   );
 }
 
@@ -438,6 +911,54 @@ function FeatureInspector({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function RegionInspector({
+  region,
+  onDeleteVertex,
+}: {
+  region: PlanningRegion;
+  onDeleteVertex: (vertexIndex: number) => void;
+}) {
+  const bounds = regionBounds(region);
+  return (
+    <div className="inspector-content">
+      <dl>
+        <dt>Region</dt>
+        <dd>{region.name}</dd>
+        <dt>Purpose</dt>
+        <dd>{region.purpose}</dd>
+        <dt>Stage</dt>
+        <dd>{region.stage}</dd>
+        <dt>Shape</dt>
+        <dd>{isAxisAlignedRectangle(region) ? "Axis-aligned rectangle" : "Polygon"}</dd>
+        {bounds ? (
+          <>
+            <dt>S span</dt>
+            <dd>
+              {bounds.minS.toFixed(3)} - {bounds.maxS.toFixed(3)} mm
+            </dd>
+            <dt>R span</dt>
+            <dd>
+              {bounds.minR.toFixed(3)} - {bounds.maxR.toFixed(3)} mm
+            </dd>
+          </>
+        ) : null}
+      </dl>
+      <div className="vertex-table">
+        {region.polygon.map((point, index) => (
+          <div key={`${region.id}-${index}`} className="vertex-row">
+            <span>v{index + 1}</span>
+            <span>s {point.s_mm.toFixed(3)}</span>
+            <span>r {point.r_mm.toFixed(3)}</span>
+            <button type="button" onClick={() => onDeleteVertex(index)}>
+              Delete
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

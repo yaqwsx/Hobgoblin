@@ -47,7 +47,13 @@ export interface PlanningRegion {
   name: string;
   stage: number;
   purpose: string;
+  polygon: PointSr[];
   allowed_feature_ids?: string[];
+}
+
+export interface PointSr {
+  s_mm: number;
+  r_mm: number;
 }
 
 export interface ParsedProject {

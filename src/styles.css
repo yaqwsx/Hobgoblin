@@ -109,9 +109,40 @@ button {
 
 .toolbar svg,
 .runtime-pill svg,
-.tree-title svg {
+.tree-title svg,
+.segmented-control svg,
+.editor-toolbar svg {
   width: 16px;
   height: 16px;
+}
+
+.segmented-control {
+  display: inline-flex;
+  min-height: 36px;
+  border: 1px solid #536469;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented-control button {
+  width: 38px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid #536469;
+  background: #314044;
+  color: #f8faf6;
+}
+
+.segmented-control button:first-child {
+  border-left: 0;
+}
+
+.segmented-control button.active {
+  background: #7ec4a5;
+  color: #13201c;
 }
 
 .pathbar {
@@ -247,79 +278,160 @@ button {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-.shaft-preview {
+.planning-editor {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(180px, 1fr) auto;
-  gap: 20px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
   padding: 20px;
 }
 
-.shaft-axis {
-  min-height: 150px;
+.editor-toolbar {
+  min-height: 34px;
   display: flex;
   align-items: center;
-  padding: 28px 16px;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.editor-toolbar span,
+.measurement-readout {
+  min-width: 0;
+  color: #536267;
+  font-size: 13px;
+}
+
+.editor-toolbar button,
+.vertex-row button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid #c7d1ca;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #273237;
+}
+
+.editor-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.planning-svg {
+  width: 100%;
+  min-height: 360px;
+  max-height: 100%;
   border: 1px solid #d8dfd6;
   border-radius: 7px;
-  background:
-    linear-gradient(#eef2ee 1px, transparent 1px),
-    linear-gradient(90deg, #eef2ee 1px, transparent 1px),
-    #ffffff;
-  background-size: 28px 28px;
-  overflow: hidden;
+  background: #ffffff;
 }
 
-.shaft-segment {
-  height: 74px;
-  min-width: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #7d8a8f;
-  border-left: 0;
-  background: #d9e3e0;
-  color: #273237;
-  overflow: hidden;
+.axis-line {
+  stroke: #9ba9a4;
+  stroke-width: 1;
 }
 
-.shaft-segment:first-child {
-  border-left: 1px solid #7d8a8f;
-  border-radius: 6px 0 0 6px;
-}
-
-.shaft-segment:last-child {
-  border-radius: 0 6px 6px 0;
-}
-
-.shaft-segment.selected {
-  background: #7ec4a5;
-  border-color: #2c6f55;
-}
-
-.shaft-segment span {
-  max-width: 100%;
-  padding: 0 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.axis-label,
+.feature-label,
+.protected-label,
+.measurement-overlay text {
+  fill: #46555a;
   font-size: 12px;
+}
+
+.stock-rect {
+  fill: #eef2ee;
+  stroke: #889691;
+  stroke-width: 1.5;
+}
+
+.profile {
+  fill: #cfdcda;
+  stroke: #65777a;
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+
+.profile.selected {
+  fill: #7ec4a5;
+  stroke: #2c6f55;
+  stroke-width: 2;
+}
+
+.protected {
+  fill: rgba(196, 99, 68, 0.18);
+  stroke: rgba(196, 99, 68, 0.55);
+  stroke-width: 1;
+  cursor: pointer;
+}
+
+.protected.selected {
+  fill: rgba(196, 99, 68, 0.3);
+  stroke-width: 2;
+}
+
+.region-polygon {
+  fill: rgba(69, 133, 174, 0.18);
+  stroke: #3f7fa6;
+  stroke-width: 2;
+  cursor: pointer;
+}
+
+.region-polygon.selected {
+  fill: rgba(126, 196, 165, 0.22);
+  stroke: #2c6f55;
+}
+
+.vertex-handle,
+.edge-add-handle,
+.axis-handle,
+.measure-anchor {
+  cursor: pointer;
+  vector-effect: non-scaling-stroke;
+}
+
+.vertex-handle {
+  fill: #ffffff;
+  stroke: #2c6f55;
+  stroke-width: 2;
+}
+
+.edge-add-handle {
+  fill: #233033;
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.axis-handle {
+  fill: #7ec4a5;
+  stroke: #224f43;
+  stroke-width: 1.5;
+}
+
+.measure-anchor {
+  fill: #f4c15d;
+  stroke: #744d10;
+  stroke-width: 1.5;
+}
+
+.measurement-overlay line {
+  stroke: #a64c2d;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.measurement-overlay text {
+  fill: #7a321e;
   font-weight: 700;
 }
 
-.planning-strip {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.planning-region {
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid #c6d3ca;
-  border-radius: 6px;
-  background: #f5f8f4;
-  color: #334044;
+.measurement-readout {
+  min-height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inspector-content dl {
@@ -363,6 +475,23 @@ button {
 .selection-diagnostics p {
   margin: 0 0 6px;
   font-size: 13px;
+}
+
+.vertex-table {
+  display: grid;
+  gap: 6px;
+}
+
+.vertex-row {
+  display: grid;
+  grid-template-columns: 34px minmax(70px, 1fr) minmax(70px, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #d8dfd6;
+  border-radius: 6px;
+  background: #ffffff;
+  font-size: 12px;
 }
 
 .diagnostics-panel {
