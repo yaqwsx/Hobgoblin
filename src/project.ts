@@ -15,6 +15,14 @@ export interface HobgoblinProject {
     id: string;
     name: string;
     machine_profile_id: string;
+    workholding?: {
+      held_side: "left" | "right";
+      tailstock: {
+        enabled: boolean;
+        protected_start_s_mm: number | null;
+        protected_end_s_mm: number | null;
+      };
+    };
     protected_intervals?: ProtectedInterval[];
   };
   stock: {
@@ -25,6 +33,11 @@ export interface HobgoblinProject {
   };
   stack: StackItem[];
   planning_regions?: PlanningRegion[];
+  library_refs?: {
+    machine_profile_id?: string;
+    material_id?: string;
+    tool_ids?: string[];
+  };
 }
 
 export interface StackItem {

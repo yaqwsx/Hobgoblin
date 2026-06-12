@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   Box,
   CheckCircle2,
   CirclePlus,
@@ -12,11 +14,15 @@ import {
   HardDrive,
   Layers,
   ListTree,
+  Maximize2,
   MousePointer2,
   MoveDown,
   MoveUp,
+  Play,
   Save,
   Wrench,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -56,6 +62,7 @@ import {
   loadProjectFromPath,
   saveProjectToPath,
   validateProjectSource,
+  type StackInterval,
   type ValidationDiagnostic,
   type ValidationResponse,
 } from "./tauri";
@@ -75,6 +82,10 @@ type MeasurementAnchor = {
   point: PointSr;
 };
 type MoveDirection = "up" | "down";
+const defaultMachineId = "machine.carvera_air.default";
+const defaultMaterialId = "material.brass.generic";
+const defaultEndmillId = "tool.endmill.3mm.flat";
+const defaultVCutterId = "tool.v.60deg.3mm_flat";
 
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +96,8 @@ export function App() {
   const [status, setStatus] = useState("No project loaded");
   const [editorMode, setEditorMode] = useState<EditorMode>("select");
   const [measurementAnchors, setMeasurementAnchors] = useState<MeasurementAnchor[]>([]);
+  const [undoStack, setUndoStack] = useState<LoadedProject[]>([]);
+  const [redoStack, setRedoStack] = useState<LoadedProject[]>([]);
 
   const selectedFeature = useMemo(() => {
     if (!loaded || !selectedObjectId) {
@@ -194,6 +207,15 @@ export function App() {
     }
   }
 
+  function newProject() {
+    const project = createDefaultProject();
+    const source = JSON.stringify(project, null, 2);
+    applyLoadedSource(source, validateProjectInBrowser(source), "untitled.hobgoblin.json");
+    setProjectPath("untitled.hobgoblin.json");
+    setSavePath("untitled.hobgoblin.json");
+    setStatus("Created new shaft project");
+  }
+
   async function saveProject() {
     if (!loaded) {
       setStatus("No project is loaded");
@@ -233,6 +255,14 @@ export function App() {
     }
   }
 
+  function previewSchematic() {
+    if (!loaded) {
+      setStatus("No project is loaded");
+      return;
+    }
+    setStatus(`Preview ready: ${loaded.project.stack.length} stack items, ${(loaded.project.planning_regions ?? []).length} planning regions`);
+  }
+
   async function validateSource(source: string) {
     if (isTauriRuntime()) {
       return validateProjectSource(source);
@@ -250,6 +280,8 @@ export function App() {
     });
     setSelectedObjectId(parsed.project.stack[0]?.id ?? parsed.project.stock.id);
     setMeasurementAnchors([]);
+    setUndoStack([]);
+    setRedoStack([]);
   }
 
   function updateProject(project: HobgoblinProject, statusMessage: string) {
@@ -267,16 +299,16 @@ export function App() {
           intervals: loaded?.validation.intervals ?? [],
         }
       : validateProjectInBrowser(source);
-    setLoaded((current) =>
-      current
-        ? {
-            ...current,
-            source,
-            project,
-            validation,
-          }
-        : current,
-    );
+    if (loaded) {
+      setUndoStack((history) => [...history.slice(-19), loaded]);
+      setRedoStack([]);
+      setLoaded({
+        ...loaded,
+        source,
+        project,
+        validation,
+      });
+    }
     setStatus(statusMessage);
     if (isDesktopRuntime) {
       void validateProjectSource(source)
@@ -290,6 +322,33 @@ export function App() {
           setStatus(errorMessage(error));
         });
     }
+  }
+
+  function restoreProjectSnapshot(snapshot: LoadedProject, statusMessage: string) {
+    setLoaded(snapshot);
+    setSelectedObjectId(snapshot.project.stack[0]?.id ?? snapshot.project.stock.id);
+    setMeasurementAnchors([]);
+    setStatus(statusMessage);
+  }
+
+  function undoProjectEdit() {
+    const previous = undoStack[undoStack.length - 1];
+    if (!previous || !loaded) {
+      return;
+    }
+    setRedoStack((redoHistory) => [...redoHistory.slice(-19), loaded]);
+    setUndoStack(undoStack.slice(0, -1));
+    restoreProjectSnapshot(previous, "Undid project edit");
+  }
+
+  function redoProjectEdit() {
+    const next = redoStack[redoStack.length - 1];
+    if (!next || !loaded) {
+      return;
+    }
+    setUndoStack((undoHistory) => [...undoHistory.slice(-19), loaded]);
+    setRedoStack(redoStack.slice(0, -1));
+    restoreProjectSnapshot(next, "Redid project edit");
   }
 
   function updatePlanningRegion(regionId: string, updater: (region: PlanningRegion) => PlanningRegion) {
@@ -440,6 +499,7 @@ export function App() {
         </div>
         <div className="command-ribbon" aria-label="Project commands">
           <CommandGroup label="File">
+            <CommandButton icon={<CirclePlus aria-hidden="true" />} label="New" onClick={newProject} />
             <CommandButton icon={<FileUp aria-hidden="true" />} label="Open" onClick={() => fileInputRef.current?.click()} />
             <CommandButton icon={<FolderOpen aria-hidden="true" />} label="Path" onClick={openFromPath} />
             <CommandButton icon={<FileDown aria-hidden="true" />} label="Sample" onClick={loadSampleProject} />
@@ -448,14 +508,17 @@ export function App() {
           <CommandGroup label="Create">
             <CommandButton icon={<Box aria-hidden="true" />} label="Cylinder" onClick={() => addStackItem("cylindrical_section")} disabled={!loaded} />
             <CommandButton icon={<Cog aria-hidden="true" />} label="Spur" onClick={() => addStackItem("spur_gear")} disabled={!loaded} />
-            <CommandButton icon={<Cog aria-hidden="true" />} label="Helical" onClick={() => addStackItem("helical_gear")} disabled={!loaded} />
-            <CommandButton icon={<Layers aria-hidden="true" />} label="Herringbone" onClick={() => addStackItem("herringbone_gear")} disabled={!loaded} />
-            <CommandButton icon={<CirclePlus aria-hidden="true" />} label="Eccentric" onClick={() => addStackItem("eccentric_section")} disabled={!loaded} />
+            <CommandButton icon={<Cog aria-hidden="true" />} label="Helical" secondary="schema" title="Helical schema placeholder; machining kernel is not implemented yet" onClick={() => addStackItem("helical_gear")} disabled={!loaded} />
+            <CommandButton icon={<Layers aria-hidden="true" />} label="Herringbone" secondary="schema" title="Herringbone schema placeholder; machining kernel is not implemented yet" onClick={() => addStackItem("herringbone_gear")} disabled={!loaded} />
+            <CommandButton icon={<CirclePlus aria-hidden="true" />} label="Eccentric" secondary="schema" title="Eccentric schema placeholder; machining kernel is not implemented yet" onClick={() => addStackItem("eccentric_section")} disabled={!loaded} />
             <CommandButton icon={<Layers aria-hidden="true" />} label="Region" onClick={addPlanningRegion} disabled={!loaded} />
             <CommandButton icon={<ListTree aria-hidden="true" />} label="Protect" onClick={addProtectedInterval} disabled={!loaded} />
           </CommandGroup>
           <CommandGroup label="Inspect">
             <CommandButton icon={<CheckCircle2 aria-hidden="true" />} label="Validate" onClick={revalidate} disabled={!loaded} />
+            <CommandButton icon={<Play aria-hidden="true" />} label="Preview" onClick={previewSchematic} disabled={!loaded} />
+            <CommandButton icon={<ArrowLeft aria-hidden="true" />} label="Undo" onClick={undoProjectEdit} disabled={!loaded || undoStack.length === 0} />
+            <CommandButton icon={<ArrowRight aria-hidden="true" />} label="Redo" onClick={redoProjectEdit} disabled={!loaded || redoStack.length === 0} />
             <CommandButton icon={<Wrench aria-hidden="true" />} label="Export" disabled title="G-code export shell is tracked separately" />
             <div className="segmented-control" aria-label="Editor mode">
               <button
@@ -517,6 +580,7 @@ export function App() {
               project={loaded.project}
               selectedObjectId={selectedObjectId}
               diagnostics={loaded.validation.diagnostics}
+              intervals={loaded.validation.intervals}
               onSelect={setSelectedObjectId}
               onMoveStackItem={moveStackItem}
             />
@@ -588,6 +652,7 @@ export function App() {
             <FeatureInspector
               feature={selectedFeature}
               diagnostics={diagnosticsForSelection}
+              toolOptions={loaded.project.library_refs?.tool_ids ?? []}
               onUpdate={(patch) => updateFeature(selectedFeature.id, patch)}
             />
           ) : loaded && selectedRegion ? (
@@ -619,9 +684,17 @@ export function App() {
               onUpdate={(patch) => updateProtectedInterval(selectedProtectedInterval.id, patch)}
             />
           ) : loaded && selectedObjectId === loaded.project.stock.id ? (
-            <StockInspector stock={loaded.project.stock} onUpdate={updateStock} />
+            <StockInspector
+              stock={loaded.project.stock}
+              materialOptions={loaded.project.library_refs?.material_id ? [loaded.project.library_refs.material_id] : []}
+              onUpdate={updateStock}
+            />
           ) : loaded && selectedObjectId === loaded.project.setup.id ? (
-            <SetupInspector setup={loaded.project.setup} onUpdate={updateSetup} />
+            <SetupInspector
+              setup={loaded.project.setup}
+              machineOptions={loaded.project.library_refs?.machine_profile_id ? [loaded.project.library_refs.machine_profile_id] : []}
+              onUpdate={updateSetup}
+            />
           ) : loaded ? (
             <ProjectInspector project={loaded.project} onUpdate={updateProjectMetadata} />
           ) : (
@@ -672,17 +745,19 @@ function CommandButton({
   onClick,
   disabled,
   title,
+  secondary,
 }: {
   icon: ReactNode;
   label: string;
   onClick?: () => void;
   disabled?: boolean;
   title?: string;
+  secondary?: string;
 }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label}>
       {icon}
-      <span>{label}</span>
+      <span>{label}{secondary ? <small>{secondary}</small> : null}</span>
     </button>
   );
 }
@@ -695,17 +770,21 @@ function FeatureTree({
   project,
   selectedObjectId,
   diagnostics,
+  intervals,
   onSelect,
   onMoveStackItem,
 }: {
   project: HobgoblinProject;
   selectedObjectId: string | null;
   diagnostics: ValidationDiagnostic[];
+  intervals: StackInterval[];
   onSelect: (objectId: string) => void;
   onMoveStackItem: (itemId: string, direction: MoveDirection) => void;
 }) {
   const protectedIntervals = project.setup.protected_intervals ?? [];
   const planningRegions = project.planning_regions ?? [];
+  const hasDiagnostics = (objectId: string) =>
+    diagnostics.some((diagnostic) => diagnostic.object_id === objectId);
   return (
     <div className="tree-list">
       <div className="tree-section">
@@ -716,7 +795,7 @@ function FeatureTree({
           onClick={() => onSelect(project.setup.id)}
         >
           <span className="tree-title">
-            <Wrench aria-hidden="true" />
+            {hasDiagnostics(project.setup.id) ? <AlertTriangle aria-hidden="true" /> : <Wrench aria-hidden="true" />}
             {project.setup.name}
           </span>
           <span>{project.setup.machine_profile_id}</span>
@@ -730,7 +809,7 @@ function FeatureTree({
         onClick={() => onSelect(project.stock.id)}
       >
           <span className="tree-title">
-            <Box aria-hidden="true" />
+            {hasDiagnostics(project.stock.id) ? <AlertTriangle aria-hidden="true" /> : <Box aria-hidden="true" />}
             {project.stock.id}
           </span>
           <span>{project.stock.diameter_mm.toFixed(2)} x {project.stock.length_mm.toFixed(2)} mm</span>
@@ -739,7 +818,7 @@ function FeatureTree({
       <div className="tree-section">
         <span>Gear stack</span>
       {project.stack.map((item, index) => {
-        const hasDiagnostics = diagnostics.some((diagnostic) => diagnostic.object_id === item.id);
+        const itemHasDiagnostics = hasDiagnostics(item.id);
         return (
           <div
             key={item.id}
@@ -747,7 +826,7 @@ function FeatureTree({
           >
             <button type="button" className="tree-item-main" onClick={() => onSelect(item.id)}>
               <span className="tree-title">
-                {hasDiagnostics ? <AlertTriangle aria-hidden="true" /> : <Cog aria-hidden="true" />}
+                {itemHasDiagnostics ? <AlertTriangle aria-hidden="true" /> : <Cog aria-hidden="true" />}
                 {item.name}
               </span>
               <span>{featureTypeLabel(item.type)} / {item.length_mm.toFixed(2)} mm</span>
@@ -774,7 +853,7 @@ function FeatureTree({
             onClick={() => onSelect(region.id)}
           >
             <span className="tree-title">
-              <Layers aria-hidden="true" />
+              {hasDiagnostics(region.id) ? <AlertTriangle aria-hidden="true" /> : <Layers aria-hidden="true" />}
               {region.name}
             </span>
             <span>{region.purpose} / stage {region.stage}</span>
@@ -791,13 +870,46 @@ function FeatureTree({
             onClick={() => onSelect(interval.id)}
           >
             <span className="tree-title">
-              <ListTree aria-hidden="true" />
+              {hasDiagnostics(interval.id) ? <AlertTriangle aria-hidden="true" /> : <ListTree aria-hidden="true" />}
               {interval.id}
             </span>
             <span>{interval.purpose} / {interval.start_s_mm.toFixed(2)}-{interval.end_s_mm.toFixed(2)} mm</span>
           </button>
         ))}
       </div>
+      {project.library_refs ? (
+        <div className="tree-section">
+          <span>Library refs</span>
+          {project.library_refs.machine_profile_id ? (
+            <div className="tree-note">Machine: {project.library_refs.machine_profile_id}</div>
+          ) : null}
+          {project.library_refs.material_id ? (
+            <div className="tree-note">Material: {project.library_refs.material_id}</div>
+          ) : null}
+          {(project.library_refs.tool_ids ?? []).map((toolId) => (
+            <div key={toolId} className="tree-note">Tool: {toolId}</div>
+          ))}
+        </div>
+      ) : null}
+      {intervals.length > 0 ? (
+        <div className="tree-section">
+          <span>Stack intervals</span>
+          {intervals.map((interval) => (
+            <button
+              type="button"
+              key={interval.item_id}
+              className={selectedObjectId === interval.item_id ? "tree-item selected" : "tree-item"}
+              onClick={() => onSelect(interval.item_id)}
+            >
+              <span className="tree-title">
+                <ListTree aria-hidden="true" />
+                {interval.item_id}
+              </span>
+              <span>{interval.start_s_mm.toFixed(2)}-{interval.end_s_mm.toFixed(2)} mm</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -828,6 +940,8 @@ function PlanningEditor({
   onResizeAxisAlignedRegion: (regionId: string, bounds: RegionBounds) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [viewZoom, setViewZoom] = useState(1);
+  const [viewCenterOffsetS, setViewCenterOffsetS] = useState(0);
   const spans = useMemo(() => stackSpans(project), [project]);
   const stockStartS = project.project.datum.s_offset_mm;
   const stockEndS = stockStartS + project.stock.length_mm;
@@ -838,18 +952,27 @@ function PlanningEditor({
     ...spans.map((span) => radiusForItem(span.item)),
     ...planningRegions.flatMap((region) => region.polygon.map((point) => point.r_mm)),
   );
-  const minS = Math.min(
+  const domainMinS = Math.min(
     stockStartS,
     ...spans.map((span) => span.startS),
     ...protectedIntervals.map((interval) => interval.start_s_mm),
     ...planningRegions.flatMap((region) => region.polygon.map((point) => point.s_mm)),
   );
-  const maxS = Math.max(
+  const domainMaxS = Math.max(
     stockEndS,
     ...spans.map((span) => span.endS),
     ...protectedIntervals.map((interval) => interval.end_s_mm),
     ...planningRegions.flatMap((region) => region.polygon.map((point) => point.s_mm)),
   );
+  const domainRangeS = Math.max(1, domainMaxS - domainMinS);
+  const visibleRangeS = domainRangeS / viewZoom;
+  const domainCenterS = (domainMinS + domainMaxS) / 2;
+  const visibleCenterS = Math.min(
+    domainMaxS - visibleRangeS / 2,
+    Math.max(domainMinS + visibleRangeS / 2, domainCenterS + viewCenterOffsetS),
+  );
+  const minS = visibleRangeS >= domainRangeS ? domainMinS : visibleCenterS - visibleRangeS / 2;
+  const maxS = visibleRangeS >= domainRangeS ? domainMaxS : visibleCenterS + visibleRangeS / 2;
   const sRange = Math.max(1, maxS - minS);
   const maxR = Math.max(1, maxProfileRadius);
   const viewWidth = 1000;
@@ -863,9 +986,24 @@ function PlanningEditor({
   const sForX = (x: number) => minS + ((x - padding.left) / plotWidth) * sRange;
   const rForY = (y: number) => (1 - (y - padding.top) / plotHeight) * maxR;
   const clampPoint = (point: PointSr): PointSr => ({
-    s_mm: Math.min(maxS, Math.max(minS, point.s_mm)),
+    s_mm: Math.min(domainMaxS, Math.max(domainMinS, point.s_mm)),
     r_mm: Math.min(maxR, Math.max(0, point.r_mm)),
   });
+
+  const setZoom = (nextZoom: number) => {
+    setViewZoom(Math.min(8, Math.max(1, nextZoom)));
+  };
+  const panView = (direction: -1 | 1) => {
+    setViewCenterOffsetS((current) => {
+      const next = current + direction * visibleRangeS * 0.25;
+      const maxOffset = Math.max(0, domainRangeS / 2 - visibleRangeS / 2);
+      return Math.min(maxOffset, Math.max(-maxOffset, next));
+    });
+  };
+  const fitView = () => {
+    setViewZoom(1);
+    setViewCenterOffsetS(0);
+  };
 
   function eventPoint(event: React.PointerEvent<SVGElement>): PointSr {
     const svg = svgRef.current;
@@ -892,11 +1030,29 @@ function PlanningEditor({
   return (
     <div className="planning-editor">
       <div className="editor-toolbar">
-        <span>{editorMode === "measure" ? "Measure anchors" : "Edit geometry"}</span>
-        <button type="button" onClick={onResetMeasurement} disabled={measurementAnchors.length === 0}>
-          <Crosshair aria-hidden="true" />
-          Clear
-        </button>
+        <span>{editorMode === "measure" ? "Measure anchors" : "Edit geometry"} / {viewZoom.toFixed(1)}x</span>
+        <div className="viewport-controls" aria-label="Viewport controls">
+          <button type="button" onClick={() => panView(-1)} disabled={viewZoom <= 1} title="Pan left" aria-label="Pan left">
+            <ArrowLeft aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => panView(1)} disabled={viewZoom <= 1} title="Pan right" aria-label="Pan right">
+            <ArrowRight aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => setZoom(viewZoom / 1.5)} disabled={viewZoom <= 1} title="Zoom out" aria-label="Zoom out">
+            <ZoomOut aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => setZoom(viewZoom * 1.5)} disabled={viewZoom >= 8} title="Zoom in" aria-label="Zoom in">
+            <ZoomIn aria-hidden="true" />
+          </button>
+          <button type="button" onClick={fitView} title="Fit stack" aria-label="Fit stack">
+            <Maximize2 aria-hidden="true" />
+            Fit
+          </button>
+          <button type="button" onClick={onResetMeasurement} disabled={measurementAnchors.length === 0}>
+            <Crosshair aria-hidden="true" />
+            Clear
+          </button>
+        </div>
       </div>
       <svg
         ref={svgRef}
@@ -922,6 +1078,12 @@ function PlanningEditor({
         <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + plotHeight} className="axis-line" />
         <text x={padding.left} y={viewHeight - 12} className="axis-label">s / mm</text>
         <text x={12} y={padding.top + 14} className="axis-label">r / mm</text>
+        {stockStartS >= minS && stockStartS <= maxS ? (
+          <g className="datum-marker">
+            <line x1={xForS(stockStartS)} y1={padding.top} x2={xForS(stockStartS)} y2={padding.top + plotHeight} />
+            <text x={xForS(stockStartS) + 5} y={padding.top + plotHeight - 8}>datum</text>
+          </g>
+        ) : null}
 
         <rect
           x={xForS(stockStartS)}
@@ -956,16 +1118,31 @@ function PlanningEditor({
 
         {spans.map((span) => {
           const radius = radiusForItem(span.item);
+          const xStart = xForS(span.startS);
+          const xEnd = xForS(span.endS);
+          const featureWidth = xEnd - xStart;
+          const hitWidth = Math.max(featureWidth, 10);
+          const hitX = xStart - Math.max(0, hitWidth - featureWidth) / 2;
           return (
             <g key={span.item.id}>
               <rect
-                x={xForS(span.startS)}
+                x={xStart}
                 y={yForR(radius)}
-                width={xForS(span.endS) - xForS(span.startS)}
+                width={featureWidth}
                 height={yForR(0) - yForR(radius)}
                 className={selectedObjectId === span.item.id ? "profile selected" : "profile"}
                 onClick={() => onSelect(span.item.id)}
               />
+              {hitWidth > featureWidth ? (
+                <rect
+                  x={hitX}
+                  y={padding.top}
+                  width={hitWidth}
+                  height={plotHeight}
+                  className="profile-hit"
+                  onClick={() => onSelect(span.item.id)}
+                />
+              ) : null}
               <text x={(xForS(span.startS) + xForS(span.endS)) / 2} y={yForR(radius) - 7} className="feature-label">
                 {span.item.name}
               </text>
@@ -1276,13 +1453,33 @@ function ReadonlyField({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ReferenceField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const values = Array.from(new Set([value, ...options].filter(Boolean)));
+  if (values.length > 0) {
+    return <SelectField label={label} value={value} options={values} onChange={onChange} />;
+  }
+  return <TextField label={label} value={value} onChange={onChange} />;
+}
+
 function FeatureInspector({
   feature,
   diagnostics,
+  toolOptions,
   onUpdate,
 }: {
   feature: StackItem;
   diagnostics: ValidationDiagnostic[];
+  toolOptions: string[];
   onUpdate: (patch: Partial<StackItem>) => void;
 }) {
   return (
@@ -1293,7 +1490,7 @@ function FeatureInspector({
         <TextField label="Name" value={feature.name} onChange={(name) => onUpdate({ name })} />
         <NumberField label="Length mm" value={feature.length_mm} onChange={(length_mm) => onUpdate({ length_mm })} />
       </FieldGroup>
-      <FeatureTypeFields feature={feature} onUpdate={onUpdate} />
+      <FeatureTypeFields feature={feature} toolOptions={toolOptions} onUpdate={onUpdate} />
       {diagnostics.length > 0 ? (
         <div className="selection-diagnostics">
           {diagnostics.map((diagnostic, index) => (
@@ -1307,16 +1504,35 @@ function FeatureInspector({
 
 function FeatureTypeFields({
   feature,
+  toolOptions,
   onUpdate,
 }: {
   feature: StackItem;
+  toolOptions: string[];
   onUpdate: (patch: Partial<StackItem>) => void;
 }) {
   if (feature.type === "cylindrical_section") {
+    const machining = objectValue(feature.machining);
     return (
-      <FieldGroup title="Cylinder">
-        <NumberField label="Radius mm" value={numberValue(feature.radius_mm)} onChange={(radius_mm) => onUpdate({ radius_mm })} />
-      </FieldGroup>
+      <>
+        <FieldGroup title="Cylinder">
+          <NumberField label="Radius mm" value={numberValue(feature.radius_mm)} onChange={(radius_mm) => onUpdate({ radius_mm })} />
+        </FieldGroup>
+        <FieldGroup title="Machining tools">
+          <ReferenceField
+            label="Roughing tool"
+            value={stringValue(machining.roughing_tool_id)}
+            options={toolOptions}
+            onChange={(roughing_tool_id) => onUpdate({ machining: { ...machining, roughing_tool_id } })}
+          />
+          <ReferenceField
+            label="Finishing tool"
+            value={stringValue(machining.finishing_tool_id)}
+            options={toolOptions}
+            onChange={(finishing_tool_id) => onUpdate({ machining: { ...machining, finishing_tool_id } })}
+          />
+        </FieldGroup>
+      </>
     );
   }
   if (feature.type === "eccentric_section") {
@@ -1329,7 +1545,7 @@ function FeatureTypeFields({
     );
   }
   if (feature.type === "spur_gear") {
-    return <SpurGearFields gear={feature} onUpdate={(patch) => onUpdate(patch)} title="Spur gear" />;
+    return <SpurGearFields gear={feature} toolOptions={toolOptions} onUpdate={(patch) => onUpdate(patch)} title="Spur gear" />;
   }
   if (feature.type === "helical_gear") {
     const spur = objectValue(feature.spur);
@@ -1342,17 +1558,57 @@ function FeatureTypeFields({
         <SpurGearFields
           title="Nested spur geometry"
           gear={spur}
+          toolOptions={toolOptions}
           onUpdate={(patch) => onUpdate({ spur: { ...spur, ...patch } })}
         />
       </>
     );
   }
   if (feature.type === "herringbone_gear") {
+    const left = objectValue(feature.left);
+    const right = objectValue(feature.right);
+    const leftSpur = objectValue(left.spur);
+    const rightSpur = objectValue(right.spur);
     return (
-      <FieldGroup title="Herringbone">
-        <NumberField label="Center relief mm" value={numberValue(feature.center_relief_width_mm)} onChange={(center_relief_width_mm) => onUpdate({ center_relief_width_mm })} />
-        <ReadonlyField label="Left/right gears" value="Edit nested geometry in a later detailed inspector" />
-      </FieldGroup>
+      <>
+        <FieldGroup title="Herringbone">
+          <NumberField label="Center relief mm" value={numberValue(feature.center_relief_width_mm)} onChange={(center_relief_width_mm) => onUpdate({ center_relief_width_mm })} />
+          <NumberField
+            label="Left helix deg"
+            value={numberValue(left.helix_angle_deg, 15)}
+            onChange={(helix_angle_deg) => onUpdate({ left: { ...left, helix_angle_deg, spur: leftSpur } })}
+          />
+          <SelectField
+            label="Left hand"
+            value={stringValue(left.hand, "left")}
+            options={["left", "right"]}
+            onChange={(hand) => onUpdate({ left: { ...left, hand, spur: leftSpur } })}
+          />
+          <NumberField
+            label="Right helix deg"
+            value={numberValue(right.helix_angle_deg, 15)}
+            onChange={(helix_angle_deg) => onUpdate({ right: { ...right, helix_angle_deg, spur: rightSpur } })}
+          />
+          <SelectField
+            label="Right hand"
+            value={stringValue(right.hand, "right")}
+            options={["left", "right"]}
+            onChange={(hand) => onUpdate({ right: { ...right, hand, spur: rightSpur } })}
+          />
+        </FieldGroup>
+        <SpurGearFields
+          title="Left spur geometry"
+          gear={leftSpur}
+          toolOptions={toolOptions}
+          onUpdate={(patch) => onUpdate({ left: { ...left, spur: { ...leftSpur, ...patch } } })}
+        />
+        <SpurGearFields
+          title="Right spur geometry"
+          gear={rightSpur}
+          toolOptions={toolOptions}
+          onUpdate={(patch) => onUpdate({ right: { ...right, spur: { ...rightSpur, ...patch } } })}
+        />
+      </>
     );
   }
   return <ReadonlyField label="Geometry" value="Unsupported feature form" />;
@@ -1361,12 +1617,22 @@ function FeatureTypeFields({
 function SpurGearFields({
   title,
   gear,
+  toolOptions,
   onUpdate,
 }: {
   title: string;
   gear: Record<string, unknown>;
+  toolOptions: string[];
   onUpdate: (patch: Record<string, unknown>) => void;
 }) {
+  const moduleMm = numberValue(gear.module_mm);
+  const toothCount = numberValue(gear.tooth_count);
+  const addendumCoeff = numberValue(gear.addendum_coeff, 1);
+  const dedendumCoeff = numberValue(gear.dedendum_coeff, 1.25);
+  const profileShift = numberValue(gear.profile_shift);
+  const pitchDiameter = moduleMm * toothCount;
+  const outsideDiameter = pitchDiameter + 2 * moduleMm * (addendumCoeff + profileShift);
+  const rootDiameter = Math.max(0, pitchDiameter - 2 * moduleMm * (dedendumCoeff - profileShift));
   return (
     <FieldGroup title={title}>
       <NumberField label="Module mm" value={numberValue(gear.module_mm)} onChange={(module_mm) => onUpdate({ module_mm })} />
@@ -1377,8 +1643,46 @@ function SpurGearFields({
       <NumberField label="Dedendum coeff" value={numberValue(gear.dedendum_coeff, 1.25)} onChange={(dedendum_coeff) => onUpdate({ dedendum_coeff })} />
       <NumberField label="Backlash mm" value={numberValue(gear.backlash_mm)} onChange={(backlash_mm) => onUpdate({ backlash_mm })} />
       <NumberField label="Phase deg" value={numberValue(gear.phase_deg)} onChange={(phase_deg) => onUpdate({ phase_deg })} />
+      <ReadonlyField label="Pitch diameter" value={formatMm(pitchDiameter)} />
+      <ReadonlyField label="Root diameter" value={formatMm(rootDiameter)} />
+      <ReadonlyField label="Outside diameter" value={formatMm(outsideDiameter)} />
       <ReadonlyField label="Outside radius" value={formatMm(radiusForItem(gear as StackItem))} />
+      <ToolFields gear={gear} toolOptions={toolOptions} onUpdate={onUpdate} />
     </FieldGroup>
+  );
+}
+
+function ToolFields({
+  gear,
+  toolOptions,
+  onUpdate,
+}: {
+  gear: Record<string, unknown>;
+  toolOptions: string[];
+  onUpdate: (patch: Record<string, unknown>) => void;
+}) {
+  const machining = objectValue(gear.machining);
+  return (
+    <>
+      <ReferenceField
+        label="OD tool"
+        value={stringValue(machining.od_tool_id)}
+        options={toolOptions}
+        onChange={(od_tool_id) => onUpdate({ machining: { ...machining, od_tool_id } })}
+      />
+      <ReferenceField
+        label="V tool"
+        value={stringValue(machining.v_tool_id)}
+        options={toolOptions}
+        onChange={(v_tool_id) => onUpdate({ machining: { ...machining, v_tool_id } })}
+      />
+      <ReferenceField
+        label="Root tool"
+        value={stringValue(machining.root_tool_id)}
+        options={toolOptions}
+        onChange={(root_tool_id) => onUpdate({ machining: { ...machining, root_tool_id } })}
+      />
+    </>
   );
 }
 
@@ -1448,9 +1752,11 @@ function ProtectedIntervalInspector({
 
 function StockInspector({
   stock,
+  materialOptions,
   onUpdate,
 }: {
   stock: HobgoblinProject["stock"];
+  materialOptions: string[];
   onUpdate: (patch: Partial<HobgoblinProject["stock"]>) => void;
 }) {
   return (
@@ -1459,7 +1765,7 @@ function StockInspector({
         <ReadonlyField label="ID" value={stock.id} />
         <NumberField label="Diameter mm" value={stock.diameter_mm} onChange={(diameter_mm) => onUpdate({ diameter_mm })} />
         <NumberField label="Length mm" value={stock.length_mm} onChange={(length_mm) => onUpdate({ length_mm })} />
-        <TextField label="Material" value={stock.material_id} onChange={(material_id) => onUpdate({ material_id })} />
+        <ReferenceField label="Material" value={stock.material_id} options={materialOptions} onChange={(material_id) => onUpdate({ material_id })} />
       </FieldGroup>
     </div>
   );
@@ -1467,17 +1773,49 @@ function StockInspector({
 
 function SetupInspector({
   setup,
+  machineOptions,
   onUpdate,
 }: {
   setup: HobgoblinProject["setup"];
+  machineOptions: string[];
   onUpdate: (patch: Partial<HobgoblinProject["setup"]>) => void;
 }) {
+  const workholding = setup.workholding ?? defaultWorkholding();
+  const tailstock = workholding.tailstock;
+  const updateWorkholding = (patch: Partial<NonNullable<HobgoblinProject["setup"]["workholding"]>>) =>
+    onUpdate({ workholding: { ...workholding, ...patch } });
+  const updateTailstock = (patch: Partial<NonNullable<HobgoblinProject["setup"]["workholding"]>["tailstock"]>) =>
+    updateWorkholding({ tailstock: { ...tailstock, ...patch } });
   return (
     <div className="inspector-content">
       <FieldGroup title="Setup">
         <ReadonlyField label="ID" value={setup.id} />
         <TextField label="Name" value={setup.name} onChange={(name) => onUpdate({ name })} />
-        <TextField label="Machine" value={setup.machine_profile_id} onChange={(machine_profile_id) => onUpdate({ machine_profile_id })} />
+        <ReferenceField label="Machine" value={setup.machine_profile_id} options={machineOptions} onChange={(machine_profile_id) => onUpdate({ machine_profile_id })} />
+      </FieldGroup>
+      <FieldGroup title="Workholding">
+        <SelectField
+          label="Held side"
+          value={workholding.held_side}
+          options={["left", "right"]}
+          onChange={(held_side) => updateWorkholding({ held_side: held_side as "left" | "right" })}
+        />
+        <SelectField
+          label="Tailstock"
+          value={tailstock.enabled ? "enabled" : "disabled"}
+          options={["enabled", "disabled"]}
+          onChange={(value) => updateTailstock({ enabled: value === "enabled" })}
+        />
+        <NumberField
+          label="Tailstock start s"
+          value={tailstock.protected_start_s_mm ?? 0}
+          onChange={(protected_start_s_mm) => updateTailstock({ protected_start_s_mm })}
+        />
+        <NumberField
+          label="Tailstock end s"
+          value={tailstock.protected_end_s_mm ?? 0}
+          onChange={(protected_end_s_mm) => updateTailstock({ protected_end_s_mm })}
+        />
       </FieldGroup>
     </div>
   );
@@ -1512,6 +1850,85 @@ function numberValue(value: unknown, fallback = 0): number {
 
 function stringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function createDefaultProject(): HobgoblinProject {
+  return {
+    schema_version: 0,
+    unit_system: "metric",
+    project: {
+      id: "project.untitled",
+      name: "Untitled shaft",
+      datum: {
+        kind: "user_defined",
+        s_offset_mm: 0,
+      },
+    },
+    setup: {
+      id: "setup.single_carvera",
+      name: "Single Carvera setup",
+      machine_profile_id: defaultMachineId,
+      workholding: defaultWorkholding(),
+      protected_intervals: [
+        {
+          id: "protect.left_chuck",
+          purpose: "chuck_grip",
+          start_s_mm: -18,
+          end_s_mm: 0,
+        },
+      ],
+    },
+    stock: {
+      id: "stock.default",
+      diameter_mm: 16,
+      length_mm: 80,
+      material_id: defaultMaterialId,
+    },
+    stack: [
+      {
+        id: "feature.journal",
+        name: "Journal",
+        length_mm: 40,
+        type: "cylindrical_section",
+        radius_mm: 4,
+        machining: {
+          roughing_tool_id: defaultEndmillId,
+          finishing_tool_id: defaultEndmillId,
+        },
+      },
+    ],
+    planning_regions: [
+      {
+        id: "region.initial_rough",
+        name: "Initial roughing envelope",
+        stage: 10,
+        purpose: "roughing",
+        allowed_feature_ids: ["feature.journal"],
+        polygon: [
+          { s_mm: 0, r_mm: 8 },
+          { s_mm: 72, r_mm: 8 },
+          { s_mm: 72, r_mm: 5 },
+          { s_mm: 0, r_mm: 5 },
+        ],
+      },
+    ],
+    library_refs: {
+      machine_profile_id: defaultMachineId,
+      material_id: defaultMaterialId,
+      tool_ids: [defaultVCutterId, defaultEndmillId],
+    },
+  };
+}
+
+function defaultWorkholding(): NonNullable<HobgoblinProject["setup"]["workholding"]> {
+  return {
+    held_side: "left",
+    tailstock: {
+      enabled: false,
+      protected_start_s_mm: null,
+      protected_end_s_mm: null,
+    },
+  };
 }
 
 function DiagnosticsList({

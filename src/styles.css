@@ -129,6 +129,13 @@ button {
   cursor: not-allowed;
 }
 
+.command-group-actions small {
+  display: block;
+  color: #b4c0c1;
+  font-size: 10px;
+  line-height: 1;
+}
+
 .command-ribbon svg,
 .runtime-pill svg,
 .tree-title svg,
@@ -362,6 +369,19 @@ button {
   flex: 0 0 auto;
 }
 
+.tree-note {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  padding: 6px 9px;
+  border: 1px solid #e1e6df;
+  border-radius: 4px;
+  background: #f5f7f2;
+  color: #536267;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .editor-plane {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -381,6 +401,14 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.viewport-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .editor-toolbar span,
@@ -425,9 +453,21 @@ button {
 .axis-label,
 .feature-label,
 .protected-label,
+.datum-marker text,
 .measurement-overlay text {
   fill: #46555a;
   font-size: 12px;
+}
+
+.datum-marker line {
+  stroke: #8a5a22;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.datum-marker text {
+  fill: #8a5a22;
+  font-weight: 700;
 }
 
 .stock-rect {
@@ -440,6 +480,12 @@ button {
   fill: #cfdcda;
   stroke: #65777a;
   stroke-width: 1.5;
+  cursor: pointer;
+}
+
+.profile-hit {
+  fill: transparent;
+  stroke: transparent;
   cursor: pointer;
 }
 

@@ -170,3 +170,11 @@ jobs:
           done
           test "$ready" -eq 1
           HOBGOBLIN_UI_URL=http://127.0.0.1:1420/?sample=1 npm run test:ui
+
+      - name: Upload UI smoke screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-screenshot
+          path: target/ui-smoke/hobgoblin-ui-smoke.png
+          if-no-files-found: ignore
