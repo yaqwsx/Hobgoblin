@@ -322,8 +322,12 @@ button {
 
 .tree-row-actions {
   display: grid;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: repeat(3, 1fr);
   border-left: 1px solid #d8dfd6;
+}
+
+.tree-row-actions.single-action {
+  grid-template-rows: 1fr;
 }
 
 .tree-row-actions button {
@@ -474,6 +478,13 @@ button {
   fill: #eef2ee;
   stroke: #889691;
   stroke-width: 1.5;
+  cursor: pointer;
+}
+
+.stock-rect.selected {
+  fill: #f7ead2;
+  stroke: #b97328;
+  stroke-width: 2.5;
 }
 
 .profile {
@@ -636,6 +647,31 @@ button {
   overflow-wrap: anywhere;
   color: #263237;
   font-size: 13px;
+}
+
+.danger-action {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid #d99a8e;
+  border-radius: 4px;
+  background: #fff4f2;
+  color: #8d2f22;
+  font-weight: 700;
+}
+
+.danger-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.field-hint {
+  margin: 0;
+  color: #68777c;
+  font-size: 12px;
 }
 
 .selection-diagnostics {

@@ -37,6 +37,10 @@ try {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.getByText("Simple spur stack").waitFor();
   await page.locator(".feature-tree").getByText("20T spur gear").waitFor();
+  assert(
+    (await page.locator(".feature-tree").getByText("Stack intervals", { exact: true }).count()) === 0,
+    "expected internal stack intervals to stay out of the feature browser",
+  );
   await page.getByText("0 errors, 0 warnings").waitFor();
   const ribbon = page.locator(".command-ribbon");
   for (const name of [
@@ -89,6 +93,21 @@ try {
     protectedIntervalCount >= 2,
     `expected chuck and tailstock protected intervals, got ${protectedIntervalCount}`,
   );
+  await page.locator(".feature-tree").getByText("20T spur gear").click();
+  await expectInspectorSubtitle("feature.spur_20t");
+  const dependentRegionCountBeforeFeatureDelete = await page.locator(".region-polygon").count();
+  await page.getByRole("button", { name: "Delete feature", exact: true }).click();
+  await page.waitForFunction(
+    (expectedCount) => document.querySelectorAll(".region-polygon").length === expectedCount,
+    dependentRegionCountBeforeFeatureDelete - 1,
+  );
+  assert(
+    (await page.locator(".feature-tree").getByText("Gear finish region").count()) === 0,
+    "expected removed dependent planning region to disappear from the browser",
+  );
+  await ribbon.getByRole("button", { name: "Sample", exact: true }).click();
+  await page.locator(".feature-tree").getByText("20T spur gear").waitFor();
+  await page.getByText("0 errors, 0 warnings").waitFor();
 
   await page.locator(".feature-tree").getByText("Single Carvera setup").click();
   await expectInspectorSubtitle("setup.single_carvera");
@@ -111,9 +130,20 @@ try {
   await expectInspectorSubtitle("feature.spur");
   await expectSelectedTreeItem("Spur gear");
   await expectSelectedProfileLabel("Spur gear");
+  await page.locator(".inspector").getByText("Position s").waitFor();
+  await page.getByRole("button", { name: "Delete feature", exact: true }).click();
+  await page.getByText("Deleted Spur gear").waitFor();
+  assert(
+    (await page.locator(".feature-tree").getByText("Spur gear", { exact: true }).count()) === 0,
+    "expected deleted stack feature to disappear from the browser",
+  );
 
   await page.locator(".feature-tree").getByText("stock.brass_16x100").click();
   await expectInspectorSubtitle("stock.brass_16x100");
+  assert(
+    (await page.locator(".stock-rect.selected").count()) === 1,
+    "expected stock selection to be highlighted in the preview",
+  );
   await page.locator(".inspector").getByLabel("Diameter mm").fill("17");
   await page.getByText("17.00 mm stock").waitFor();
 
@@ -144,6 +174,12 @@ try {
   await page.locator(".feature-tree").getByText("keep_clear").waitFor();
   await page.locator(".inspector").getByLabel("Start s mm").fill("48");
   await page.locator(".feature-tree").getByText("48.00").waitFor();
+  await page.getByRole("button", { name: "Delete protected interval", exact: true }).click();
+  await page.getByText("Deleted protect.manual").waitFor();
+  assert(
+    (await page.locator(".feature-tree").getByText("protect.manual").count()) === 0,
+    "expected deleted protected interval to disappear from the browser",
+  );
 
   await page.locator(".feature-tree").getByText("Right journal").click();
   await expectInspectorSubtitle("feature.right_journal");
@@ -173,6 +209,17 @@ try {
   await page.locator(".vertex-handle").first().click();
   await page.locator(".vertex-handle").nth(1).click();
   await page.locator(".measurement-overlay").getByText("ds").waitFor();
+  const regionCountBeforeDelete = await page.locator(".region-polygon").count();
+  await page.getByRole("button", { name: "Delete planning region", exact: true }).click();
+  await page.waitForFunction(
+    (expectedCount) => document.querySelectorAll(".region-polygon").length === expectedCount,
+    regionCountBeforeDelete - 1,
+  );
+  const regionCountAfterDelete = await page.locator(".region-polygon").count();
+  assert(
+    regionCountAfterDelete === regionCountBeforeDelete - 1,
+    `expected region delete to reduce region count from ${regionCountBeforeDelete}, got ${regionCountAfterDelete}`,
+  );
   await mkdir(screenshotPath.split("/").slice(0, -1).join("/") || ".", { recursive: true });
   await page.screenshot({ path: screenshotPath, fullPage: true });
   assert(

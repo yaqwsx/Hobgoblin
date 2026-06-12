@@ -20,6 +20,7 @@ import {
   MoveUp,
   Play,
   Save,
+  Trash2,
   Wrench,
   ZoomIn,
   ZoomOut,
@@ -62,7 +63,6 @@ import {
   loadProjectFromPath,
   saveProjectToPath,
   validateProjectSource,
-  type StackInterval,
   type ValidationDiagnostic,
   type ValidationResponse,
 } from "./tauri";
@@ -80,6 +80,10 @@ type MeasurementAnchor = {
   id: string;
   label: string;
   point: PointSr;
+};
+type FeaturePosition = {
+  start_s_mm: number;
+  end_s_mm: number;
 };
 type MoveDirection = "up" | "down";
 const defaultMachineId = "machine.carvera_air.default";
@@ -104,6 +108,14 @@ export function App() {
       return null;
     }
     return loaded.project.stack.find((item) => item.id === selectedObjectId) ?? null;
+  }, [loaded, selectedObjectId]);
+
+  const selectedFeatureInterval = useMemo(() => {
+    if (!loaded || !selectedObjectId) {
+      return null;
+    }
+    const span = stackSpans(loaded.project).find((candidate) => candidate.item.id === selectedObjectId);
+    return span ? { start_s_mm: span.startS, end_s_mm: span.endS } : null;
   }, [loaded, selectedObjectId]);
 
   const selectedRegion = useMemo(() => {
@@ -410,6 +422,80 @@ export function App() {
     );
   }
 
+  function deleteStackItem(itemId: string) {
+    if (!loaded) {
+      return;
+    }
+    if (loaded.project.stack.length <= 1) {
+      setStatus("The stack must contain at least one feature");
+      return;
+    }
+    const deletedIndex = loaded.project.stack.findIndex((item) => item.id === itemId);
+    const deletedItem = loaded.project.stack[deletedIndex];
+    if (deletedIndex < 0) {
+      return;
+    }
+    const stack = loaded.project.stack.filter((item) => item.id !== itemId);
+    let removedDependentRegionCount = 0;
+    const planningRegions = (loaded.project.planning_regions ?? []).flatMap((region) => {
+      if (!region.allowed_feature_ids) {
+        return [region];
+      }
+      const allowed_feature_ids = region.allowed_feature_ids.filter((featureId) => featureId !== itemId);
+      if (allowed_feature_ids.length === 0) {
+        removedDependentRegionCount += 1;
+        return [];
+      }
+      return [{ ...region, allowed_feature_ids }];
+    });
+    updateProject(
+      {
+        ...loaded.project,
+        stack,
+        planning_regions: planningRegions,
+      },
+      removedDependentRegionCount > 0
+        ? `Deleted ${deletedItem?.name ?? itemId} and ${removedDependentRegionCount} dependent planning region${removedDependentRegionCount === 1 ? "" : "s"}`
+        : `Deleted ${deletedItem?.name ?? itemId}`,
+    );
+    setMeasurementAnchors([]);
+    setSelectedObjectId(stack[Math.min(deletedIndex, stack.length - 1)]?.id ?? loaded.project.stock.id);
+  }
+
+  function deletePlanningRegion(regionId: string) {
+    if (!loaded) {
+      return;
+    }
+    const region = (loaded.project.planning_regions ?? []).find((candidate) => candidate.id === regionId);
+    updateProject(
+      {
+        ...loaded.project,
+        planning_regions: (loaded.project.planning_regions ?? []).filter((candidate) => candidate.id !== regionId),
+      },
+      `Deleted ${region?.name ?? regionId}`,
+    );
+    setMeasurementAnchors([]);
+    setSelectedObjectId(loaded.project.stock.id);
+  }
+
+  function deleteProtectedInterval(intervalId: string) {
+    if (!loaded) {
+      return;
+    }
+    updateProject(
+      {
+        ...loaded.project,
+        setup: {
+          ...loaded.project.setup,
+          protected_intervals: (loaded.project.setup.protected_intervals ?? []).filter((interval) => interval.id !== intervalId),
+        },
+      },
+      `Deleted ${intervalId}`,
+    );
+    setMeasurementAnchors([]);
+    setSelectedObjectId(loaded.project.setup.id);
+  }
+
   function addStackItem(type: StackItemType) {
     if (!loaded) {
       return;
@@ -580,9 +666,11 @@ export function App() {
               project={loaded.project}
               selectedObjectId={selectedObjectId}
               diagnostics={loaded.validation.diagnostics}
-              intervals={loaded.validation.intervals}
               onSelect={setSelectedObjectId}
               onMoveStackItem={moveStackItem}
+              onDeleteStackItem={deleteStackItem}
+              onDeletePlanningRegion={deletePlanningRegion}
+              onDeleteProtectedInterval={deleteProtectedInterval}
             />
           ) : (
             <EmptyPanel message="Open a project file to inspect the shaft stack." />
@@ -651,14 +739,18 @@ export function App() {
           {loaded && selectedFeature ? (
             <FeatureInspector
               feature={selectedFeature}
+              interval={selectedFeatureInterval}
               diagnostics={diagnosticsForSelection}
               toolOptions={loaded.project.library_refs?.tool_ids ?? []}
               onUpdate={(patch) => updateFeature(selectedFeature.id, patch)}
+              onDelete={() => deleteStackItem(selectedFeature.id)}
+              canDelete={loaded.project.stack.length > 1}
             />
           ) : loaded && selectedRegion ? (
             <RegionInspector
               region={selectedRegion}
               onUpdate={(patch) => updatePlanningRegion(selectedRegion.id, (region) => ({ ...region, ...patch }))}
+              onDelete={() => deletePlanningRegion(selectedRegion.id)}
               onUpdateBounds={(bounds) =>
                 updatePlanningRegion(selectedRegion.id, (region) => ({
                   ...region,
@@ -682,6 +774,7 @@ export function App() {
             <ProtectedIntervalInspector
               interval={selectedProtectedInterval}
               onUpdate={(patch) => updateProtectedInterval(selectedProtectedInterval.id, patch)}
+              onDelete={() => deleteProtectedInterval(selectedProtectedInterval.id)}
             />
           ) : loaded && selectedObjectId === loaded.project.stock.id ? (
             <StockInspector
@@ -770,16 +863,20 @@ function FeatureTree({
   project,
   selectedObjectId,
   diagnostics,
-  intervals,
   onSelect,
   onMoveStackItem,
+  onDeleteStackItem,
+  onDeletePlanningRegion,
+  onDeleteProtectedInterval,
 }: {
   project: HobgoblinProject;
   selectedObjectId: string | null;
   diagnostics: ValidationDiagnostic[];
-  intervals: StackInterval[];
   onSelect: (objectId: string) => void;
   onMoveStackItem: (itemId: string, direction: MoveDirection) => void;
+  onDeleteStackItem: (itemId: string) => void;
+  onDeletePlanningRegion: (regionId: string) => void;
+  onDeleteProtectedInterval: (intervalId: string) => void;
 }) {
   const protectedIntervals = project.setup.protected_intervals ?? [];
   const planningRegions = project.planning_regions ?? [];
@@ -838,6 +935,9 @@ function FeatureTree({
               <button type="button" onClick={() => onMoveStackItem(item.id, "down")} disabled={index === project.stack.length - 1} title="Move down" aria-label={`Move ${item.name} down`}>
                 <MoveDown aria-hidden="true" />
               </button>
+              <button type="button" onClick={() => onDeleteStackItem(item.id)} disabled={project.stack.length <= 1} title="Delete feature" aria-label={`Delete ${item.name}`}>
+                <Trash2 aria-hidden="true" />
+              </button>
             </div>
           </div>
         );
@@ -846,35 +946,45 @@ function FeatureTree({
       <div className="tree-section">
         <span>Planning regions</span>
         {planningRegions.map((region) => (
-          <button
-            type="button"
+          <div
             key={region.id}
-            className={selectedObjectId === region.id ? "tree-item selected" : "tree-item"}
-            onClick={() => onSelect(region.id)}
+            className={selectedObjectId === region.id ? "tree-item tree-item-with-actions selected" : "tree-item tree-item-with-actions"}
           >
-            <span className="tree-title">
-              {hasDiagnostics(region.id) ? <AlertTriangle aria-hidden="true" /> : <Layers aria-hidden="true" />}
-              {region.name}
-            </span>
-            <span>{region.purpose} / stage {region.stage}</span>
-          </button>
+            <button type="button" className="tree-item-main" onClick={() => onSelect(region.id)}>
+              <span className="tree-title">
+                {hasDiagnostics(region.id) ? <AlertTriangle aria-hidden="true" /> : <Layers aria-hidden="true" />}
+                {region.name}
+              </span>
+              <span>{region.purpose} / stage {region.stage}</span>
+            </button>
+            <div className="tree-row-actions single-action">
+              <button type="button" onClick={() => onDeletePlanningRegion(region.id)} title="Delete planning region" aria-label={`Delete ${region.name}`}>
+                <Trash2 aria-hidden="true" />
+              </button>
+            </div>
+          </div>
         ))}
       </div>
       <div className="tree-section">
         <span>Protected intervals</span>
         {protectedIntervals.map((interval) => (
-          <button
-            type="button"
+          <div
             key={interval.id}
-            className={selectedObjectId === interval.id ? "tree-item selected" : "tree-item"}
-            onClick={() => onSelect(interval.id)}
+            className={selectedObjectId === interval.id ? "tree-item tree-item-with-actions selected" : "tree-item tree-item-with-actions"}
           >
-            <span className="tree-title">
-              {hasDiagnostics(interval.id) ? <AlertTriangle aria-hidden="true" /> : <ListTree aria-hidden="true" />}
-              {interval.id}
-            </span>
-            <span>{interval.purpose} / {interval.start_s_mm.toFixed(2)}-{interval.end_s_mm.toFixed(2)} mm</span>
-          </button>
+            <button type="button" className="tree-item-main" onClick={() => onSelect(interval.id)}>
+              <span className="tree-title">
+                {hasDiagnostics(interval.id) ? <AlertTriangle aria-hidden="true" /> : <ListTree aria-hidden="true" />}
+                {interval.id}
+              </span>
+              <span>{interval.purpose} / {interval.start_s_mm.toFixed(2)}-{interval.end_s_mm.toFixed(2)} mm</span>
+            </button>
+            <div className="tree-row-actions single-action">
+              <button type="button" onClick={() => onDeleteProtectedInterval(interval.id)} title="Delete protected interval" aria-label={`Delete ${interval.id}`}>
+                <Trash2 aria-hidden="true" />
+              </button>
+            </div>
+          </div>
         ))}
       </div>
       {project.library_refs ? (
@@ -888,25 +998,6 @@ function FeatureTree({
           ) : null}
           {(project.library_refs.tool_ids ?? []).map((toolId) => (
             <div key={toolId} className="tree-note">Tool: {toolId}</div>
-          ))}
-        </div>
-      ) : null}
-      {intervals.length > 0 ? (
-        <div className="tree-section">
-          <span>Stack intervals</span>
-          {intervals.map((interval) => (
-            <button
-              type="button"
-              key={interval.item_id}
-              className={selectedObjectId === interval.item_id ? "tree-item selected" : "tree-item"}
-              onClick={() => onSelect(interval.item_id)}
-            >
-              <span className="tree-title">
-                <ListTree aria-hidden="true" />
-                {interval.item_id}
-              </span>
-              <span>{interval.start_s_mm.toFixed(2)}-{interval.end_s_mm.toFixed(2)} mm</span>
-            </button>
           ))}
         </div>
       ) : null}
@@ -1090,7 +1181,7 @@ function PlanningEditor({
           y={yForR(project.stock.diameter_mm / 2)}
           width={xForS(stockEndS) - xForS(stockStartS)}
           height={yForR(0) - yForR(project.stock.diameter_mm / 2)}
-          className="stock-rect"
+          className={selectedObjectId === project.stock.id ? "stock-rect selected" : "stock-rect"}
           onClick={() => onSelect(project.stock.id)}
         />
 
@@ -1473,24 +1564,40 @@ function ReferenceField({
 
 function FeatureInspector({
   feature,
+  interval,
   diagnostics,
   toolOptions,
   onUpdate,
+  onDelete,
+  canDelete,
 }: {
   feature: StackItem;
+  interval: FeaturePosition | null;
   diagnostics: ValidationDiagnostic[];
   toolOptions: string[];
   onUpdate: (patch: Partial<StackItem>) => void;
+  onDelete: () => void;
+  canDelete: boolean;
 }) {
   return (
     <div className="inspector-content">
       <FieldGroup title="Feature">
         <ReadonlyField label="Type" value={featureTypeLabel(feature.type)} />
         <ReadonlyField label="ID" value={feature.id} />
+        {interval ? (
+          <ReadonlyField label="Position s" value={`${formatMm(interval.start_s_mm)}-${formatMm(interval.end_s_mm)}`} />
+        ) : null}
         <TextField label="Name" value={feature.name} onChange={(name) => onUpdate({ name })} />
         <NumberField label="Length mm" value={feature.length_mm} onChange={(length_mm) => onUpdate({ length_mm })} />
       </FieldGroup>
       <FeatureTypeFields feature={feature} toolOptions={toolOptions} onUpdate={onUpdate} />
+      <FieldGroup title="Actions">
+        <button type="button" className="danger-action" onClick={onDelete} disabled={!canDelete}>
+          <Trash2 aria-hidden="true" />
+          Delete feature
+        </button>
+        {!canDelete ? <p className="field-hint">The stack must contain at least one feature.</p> : null}
+      </FieldGroup>
       {diagnostics.length > 0 ? (
         <div className="selection-diagnostics">
           {diagnostics.map((diagnostic, index) => (
@@ -1689,11 +1796,13 @@ function ToolFields({
 function RegionInspector({
   region,
   onUpdate,
+  onDelete,
   onUpdateBounds,
   onDeleteVertex,
 }: {
   region: PlanningRegion;
   onUpdate: (patch: Partial<PlanningRegion>) => void;
+  onDelete: () => void;
   onUpdateBounds: (bounds: RegionBounds) => void;
   onDeleteVertex: (vertexIndex: number) => void;
 }) {
@@ -1727,6 +1836,12 @@ function RegionInspector({
           </div>
         ))}
       </div>
+      <FieldGroup title="Actions">
+        <button type="button" className="danger-action" onClick={onDelete}>
+          <Trash2 aria-hidden="true" />
+          Delete planning region
+        </button>
+      </FieldGroup>
     </div>
   );
 }
@@ -1734,9 +1849,11 @@ function RegionInspector({
 function ProtectedIntervalInspector({
   interval,
   onUpdate,
+  onDelete,
 }: {
   interval: NonNullable<HobgoblinProject["setup"]["protected_intervals"]>[number];
   onUpdate: (patch: { start_s_mm?: number; end_s_mm?: number; purpose?: string }) => void;
+  onDelete: () => void;
 }) {
   return (
     <div className="inspector-content">
@@ -1745,6 +1862,12 @@ function ProtectedIntervalInspector({
         <TextField label="Purpose" value={interval.purpose} onChange={(purpose) => onUpdate({ purpose })} />
         <NumberField label="Start s mm" value={interval.start_s_mm} onChange={(start_s_mm) => onUpdate({ start_s_mm })} />
         <NumberField label="End s mm" value={interval.end_s_mm} onChange={(end_s_mm) => onUpdate({ end_s_mm })} />
+      </FieldGroup>
+      <FieldGroup title="Actions">
+        <button type="button" className="danger-action" onClick={onDelete}>
+          <Trash2 aria-hidden="true" />
+          Delete protected interval
+        </button>
       </FieldGroup>
     </div>
   );
