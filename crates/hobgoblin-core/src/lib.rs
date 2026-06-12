@@ -317,7 +317,10 @@ pub fn validate_project(project: &Project) -> ValidationReport {
     }
 
     if project.unit_system != UnitSystem::Metric {
-        diagnostics.push(Diagnostic::error(None, "only metric projects are supported"));
+        diagnostics.push(Diagnostic::error(
+            None,
+            "only metric projects are supported",
+        ));
     }
 
     validate_positive(
@@ -403,7 +406,11 @@ pub fn validate_project(project: &Project) -> ValidationReport {
     }
 }
 
-fn validate_stack_item(diagnostics: &mut Vec<Diagnostic>, item: &StackItem, stock_diameter_mm: f64) {
+fn validate_stack_item(
+    diagnostics: &mut Vec<Diagnostic>,
+    item: &StackItem,
+    stock_diameter_mm: f64,
+) {
     match &item.kind {
         StackItemKind::CylindricalSection(section) => {
             validate_positive(
@@ -414,7 +421,9 @@ fn validate_stack_item(diagnostics: &mut Vec<Diagnostic>, item: &StackItem, stoc
             );
             validate_fits_stock(diagnostics, &item.id, section.radius_mm, stock_diameter_mm);
         }
-        StackItemKind::SpurGear(gear) => validate_spur_gear(diagnostics, &item.id, gear, stock_diameter_mm),
+        StackItemKind::SpurGear(gear) => {
+            validate_spur_gear(diagnostics, &item.id, gear, stock_diameter_mm)
+        }
         StackItemKind::HelicalGear(gear) => {
             validate_spur_gear(diagnostics, &item.id, &gear.spur, stock_diameter_mm);
             diagnostics.push(Diagnostic::warning(

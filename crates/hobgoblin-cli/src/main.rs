@@ -80,4 +80,3 @@ fn plan(path: PathBuf) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&graph)?);
     Ok(())
 }
-

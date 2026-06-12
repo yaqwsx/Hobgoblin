@@ -62,4 +62,3 @@ pub enum AbstractMove {
         clockwise: bool,
     },
 }
-

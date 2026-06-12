@@ -64,4 +64,3 @@ mod tests {
         assert_eq!(dimensions.root_diameter_mm, 35.0);
     }
 }
-
