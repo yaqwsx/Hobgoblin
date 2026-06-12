@@ -1196,16 +1196,41 @@ fn validate_spur_gear(
         gear.dedendum_coeff,
         "dedendum coefficient must be positive",
     );
+    validate_positive(
+        diagnostics,
+        Some(item_id.to_string()),
+        gear.addendum_coeff + gear.profile_shift,
+        "effective addendum coefficient must be positive",
+    );
+    validate_positive(
+        diagnostics,
+        Some(item_id.to_string()),
+        gear.dedendum_coeff - gear.profile_shift,
+        "effective dedendum coefficient must be positive",
+    );
 
-    let outer_radius = gear.module_mm * (gear.tooth_count as f64 + 2.0 * gear.addendum_coeff) / 2.0;
+    let outer_radius = gear.module_mm
+        * (gear.tooth_count as f64 + 2.0 * (gear.addendum_coeff + gear.profile_shift))
+        / 2.0;
     validate_fits_stock(diagnostics, item_id, outer_radius, stock_diameter_mm);
 
-    if gear.tooth_count < 17 && gear.profile_shift <= 0.0 && gear.pressure_angle_deg <= 20.0 {
+    if has_spur_undercut_risk(gear) {
         diagnostics.push(Diagnostic::warning(
             Some(item_id.to_string()),
             "low tooth count may produce undercut; generated geometry will report the manufactured result",
         ));
     }
+}
+
+fn has_spur_undercut_risk(gear: &SpurGear) -> bool {
+    if gear.addendum_coeff <= 0.0 || gear.pressure_angle_deg <= 0.0 {
+        return false;
+    }
+
+    let pressure_angle_rad = gear.pressure_angle_deg.to_radians();
+    let minimum_profile_shift =
+        gear.addendum_coeff - gear.tooth_count as f64 * pressure_angle_rad.sin().powi(2) / 2.0;
+    gear.profile_shift < minimum_profile_shift
 }
 
 fn validate_positive(
@@ -1773,5 +1798,165 @@ mod tests {
         assert!(messages.contains(&"cylindrical cutter corner radius must be non-negative"));
         assert!(messages.contains(&"cylindrical cutter stickout must be positive"));
         assert!(messages.contains(&"recipe feed must be positive"));
+    }
+
+    #[test]
+    fn shifted_spur_gear_avoids_undercut_warning() {
+        let project: Project = serde_json::from_str(
+            r#"{
+                "schema_version": 0,
+                "unit_system": "metric",
+                "project": {
+                    "id": "project.shifted",
+                    "name": "Shifted gear project",
+                    "datum": { "kind": "user_defined", "s_offset_mm": 0.0 }
+                },
+                "setup": {
+                    "id": "setup.shifted",
+                    "name": "Setup",
+                    "machine_profile_id": "machine.carvera_air.default",
+                    "workholding": {
+                        "held_side": "left",
+                        "tailstock": { "enabled": false, "protected_start_s_mm": null, "protected_end_s_mm": null }
+                    },
+                    "protected_intervals": []
+                },
+                "stock": {
+                    "id": "stock.shifted",
+                    "diameter_mm": 20.0,
+                    "length_mm": 20.0,
+                    "material_id": "material.brass.generic"
+                },
+                "stack": [
+                    {
+                        "id": "feature.shifted",
+                        "name": "Shifted gear",
+                        "length_mm": 10.0,
+                        "type": "spur_gear",
+                        "module_mm": 1.0,
+                        "tooth_count": 12,
+                        "pressure_angle_deg": 20.0,
+                        "profile_shift": 0.4
+                    }
+                ]
+            }"#,
+        )
+        .expect("shifted gear project parses");
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(!report.has_errors());
+        assert!(!messages.iter().any(|message| message.contains("undercut")));
+    }
+
+    #[test]
+    fn unshifted_low_tooth_spur_warns_about_undercut() {
+        let project: Project = serde_json::from_str(
+            r#"{
+                "schema_version": 0,
+                "unit_system": "metric",
+                "project": {
+                    "id": "project.undercut",
+                    "name": "Undercut gear project",
+                    "datum": { "kind": "user_defined", "s_offset_mm": 0.0 }
+                },
+                "setup": {
+                    "id": "setup.undercut",
+                    "name": "Setup",
+                    "machine_profile_id": "machine.carvera_air.default",
+                    "workholding": {
+                        "held_side": "left",
+                        "tailstock": { "enabled": false, "protected_start_s_mm": null, "protected_end_s_mm": null }
+                    },
+                    "protected_intervals": []
+                },
+                "stock": {
+                    "id": "stock.undercut",
+                    "diameter_mm": 20.0,
+                    "length_mm": 20.0,
+                    "material_id": "material.brass.generic"
+                },
+                "stack": [
+                    {
+                        "id": "feature.undercut",
+                        "name": "Undercut gear",
+                        "length_mm": 10.0,
+                        "type": "spur_gear",
+                        "module_mm": 1.0,
+                        "tooth_count": 12,
+                        "pressure_angle_deg": 20.0
+                    }
+                ]
+            }"#,
+        )
+        .expect("undercut gear project parses");
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(!report.has_errors());
+        assert!(messages.iter().any(|message| message.contains("undercut")));
+    }
+
+    #[test]
+    fn rejects_profile_shift_that_eliminates_effective_tooth_depth() {
+        let project: Project = serde_json::from_str(
+            r#"{
+                "schema_version": 0,
+                "unit_system": "metric",
+                "project": {
+                    "id": "project.bad_shift",
+                    "name": "Bad shift gear project",
+                    "datum": { "kind": "user_defined", "s_offset_mm": 0.0 }
+                },
+                "setup": {
+                    "id": "setup.bad_shift",
+                    "name": "Setup",
+                    "machine_profile_id": "machine.carvera_air.default",
+                    "workholding": {
+                        "held_side": "left",
+                        "tailstock": { "enabled": false, "protected_start_s_mm": null, "protected_end_s_mm": null }
+                    },
+                    "protected_intervals": []
+                },
+                "stock": {
+                    "id": "stock.bad_shift",
+                    "diameter_mm": 40.0,
+                    "length_mm": 20.0,
+                    "material_id": "material.brass.generic"
+                },
+                "stack": [
+                    {
+                        "id": "feature.bad_positive_shift",
+                        "name": "Bad positive shift",
+                        "length_mm": 10.0,
+                        "type": "spur_gear",
+                        "module_mm": 1.0,
+                        "tooth_count": 20,
+                        "pressure_angle_deg": 20.0,
+                        "profile_shift": 1.5
+                    },
+                    {
+                        "id": "feature.bad_negative_shift",
+                        "name": "Bad negative shift",
+                        "length_mm": 10.0,
+                        "type": "spur_gear",
+                        "module_mm": 1.0,
+                        "tooth_count": 20,
+                        "pressure_angle_deg": 20.0,
+                        "profile_shift": -1.0
+                    }
+                ]
+            }"#,
+        )
+        .expect("bad shift project parses");
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(report.has_errors());
+        assert!(messages.contains(&"effective dedendum coefficient must be positive"));
+        assert!(messages.contains(&"effective addendum coefficient must be positive"));
     }
 }
