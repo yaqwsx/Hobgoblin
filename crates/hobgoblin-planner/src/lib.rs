@@ -54,7 +54,7 @@ pub fn build_initial_operation_graph(project: &Project) -> OperationGraph {
 
     for item in &project.stack {
         match &item.kind {
-            StackItemKind::CylindricalSection(_) => {
+            StackItemKind::CylindricalSection { .. } => {
                 nodes.push(OperationNode {
                     id: format!("op.feature.{}.finish", item.id),
                     feature_id: Some(item.id.clone()),
@@ -63,7 +63,7 @@ pub fn build_initial_operation_graph(project: &Project) -> OperationGraph {
                     stage: 100,
                 });
             }
-            StackItemKind::SpurGear(_) => {
+            StackItemKind::SpurGear { .. } => {
                 let od = format!("op.feature.{}.od", item.id);
                 let root = format!("op.feature.{}.root", item.id);
                 let left = format!("op.feature.{}.left_flank", item.id);

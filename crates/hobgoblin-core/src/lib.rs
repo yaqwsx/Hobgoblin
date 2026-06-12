@@ -412,34 +412,55 @@ fn validate_stack_item(
     stock_diameter_mm: f64,
 ) {
     match &item.kind {
-        StackItemKind::CylindricalSection(section) => {
+        StackItemKind::CylindricalSection { radius_mm, .. } => {
             validate_positive(
                 diagnostics,
                 Some(item.id.clone()),
-                section.radius_mm,
+                *radius_mm,
                 "cylindrical section radius must be positive",
             );
-            validate_fits_stock(diagnostics, &item.id, section.radius_mm, stock_diameter_mm);
+            validate_fits_stock(diagnostics, &item.id, *radius_mm, stock_diameter_mm);
         }
-        StackItemKind::SpurGear(gear) => {
-            validate_spur_gear(diagnostics, &item.id, gear, stock_diameter_mm)
+        StackItemKind::SpurGear {
+            module_mm,
+            tooth_count,
+            pressure_angle_deg,
+            profile_shift,
+            addendum_coeff,
+            dedendum_coeff,
+            backlash_mm,
+            phase_deg,
+            machining,
+        } => {
+            let gear = SpurGear {
+                module_mm: *module_mm,
+                tooth_count: *tooth_count,
+                pressure_angle_deg: *pressure_angle_deg,
+                profile_shift: *profile_shift,
+                addendum_coeff: *addendum_coeff,
+                dedendum_coeff: *dedendum_coeff,
+                backlash_mm: *backlash_mm,
+                phase_deg: *phase_deg,
+                machining: machining.clone(),
+            };
+            validate_spur_gear(diagnostics, &item.id, &gear, stock_diameter_mm)
         }
-        StackItemKind::HelicalGear(gear) => {
-            validate_spur_gear(diagnostics, &item.id, &gear.spur, stock_diameter_mm);
+        StackItemKind::HelicalGear { spur, .. } => {
+            validate_spur_gear(diagnostics, &item.id, spur, stock_diameter_mm);
             diagnostics.push(Diagnostic::warning(
                 Some(item.id.clone()),
                 "helical gear schema is present but toolpath generation is not implemented",
             ));
         }
-        StackItemKind::HerringboneGear(_) => diagnostics.push(Diagnostic::warning(
+        StackItemKind::HerringboneGear { .. } => diagnostics.push(Diagnostic::warning(
             Some(item.id.clone()),
             "herringbone gear schema is present but toolpath generation is not implemented",
         )),
-        StackItemKind::EccentricSection(section) => {
+        StackItemKind::EccentricSection { radius_mm, .. } => {
             validate_positive(
                 diagnostics,
                 Some(item.id.clone()),
-                section.radius_mm,
+                *radius_mm,
                 "eccentric section radius must be positive",
             );
             diagnostics.push(Diagnostic::warning(
@@ -564,19 +585,19 @@ mod tests {
                 id: "a".to_string(),
                 name: "A".to_string(),
                 length_mm: 10.0,
-                kind: StackItemKind::CylindricalSection(CylindricalSection {
+                kind: StackItemKind::CylindricalSection {
                     radius_mm: 4.0,
                     machining: FeatureMachining::default(),
-                }),
+                },
             },
             StackItem {
                 id: "b".to_string(),
                 name: "B".to_string(),
                 length_mm: 5.0,
-                kind: StackItemKind::CylindricalSection(CylindricalSection {
+                kind: StackItemKind::CylindricalSection {
                     radius_mm: 3.0,
                     machining: FeatureMachining::default(),
-                }),
+                },
             },
         ];
 
