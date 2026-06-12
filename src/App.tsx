@@ -1,16 +1,25 @@
 import {
   AlertTriangle,
+  Box,
   CheckCircle2,
+  CirclePlus,
+  Cog,
   Crosshair,
   Database,
   FileDown,
   FileUp,
   FolderOpen,
   HardDrive,
+  Layers,
+  ListTree,
   MousePointer2,
+  MoveDown,
+  MoveUp,
   Save,
+  Wrench,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   distance,
   formatMm,
@@ -30,6 +39,18 @@ import {
   type PointSr,
   type StackItem,
 } from "./project";
+import {
+  createPlanningRegion,
+  createStackItem,
+  insertPlanningRegion,
+  insertStackItem,
+  reorderStackItem,
+  updateProjectMetadata as patchProjectMetadata,
+  updateProjectStock,
+  updateSetup as patchSetup,
+  updateStackItem,
+  type StackItemType,
+} from "./projectMutations";
 import {
   isTauriRuntime,
   loadProjectFromPath,
@@ -53,6 +74,7 @@ type MeasurementAnchor = {
   label: string;
   point: PointSr;
 };
+type MoveDirection = "up" | "down";
 
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -78,6 +100,17 @@ export function App() {
     return (
       (loaded.project.planning_regions ?? []).find((region) => region.id === selectedObjectId) ??
       null
+    );
+  }, [loaded, selectedObjectId]);
+
+  const selectedProtectedInterval = useMemo(() => {
+    if (!loaded || !selectedObjectId) {
+      return null;
+    }
+    return (
+      loaded.project.setup.protected_intervals?.find(
+        (interval) => interval.id === selectedObjectId,
+      ) ?? null
     );
   }, [loaded, selectedObjectId]);
 
@@ -250,6 +283,110 @@ export function App() {
     updateProject(project, `Edited ${regionId}`);
   }
 
+  function updateFeature(featureId: string, patch: Partial<StackItem>) {
+    if (!loaded) {
+      return;
+    }
+    updateProject(updateStackItem(loaded.project, featureId, patch), `Edited ${featureId}`);
+  }
+
+  function updateStock(patch: Partial<HobgoblinProject["stock"]>) {
+    if (!loaded) {
+      return;
+    }
+    updateProject(updateProjectStock(loaded.project, patch), "Edited stock");
+  }
+
+  function updateProjectMetadata(patch: Partial<HobgoblinProject["project"]>) {
+    if (!loaded) {
+      return;
+    }
+    updateProject(patchProjectMetadata(loaded.project, patch), "Edited project");
+  }
+
+  function updateSetup(patch: Partial<HobgoblinProject["setup"]>) {
+    if (!loaded) {
+      return;
+    }
+    updateProject(patchSetup(loaded.project, patch), "Edited setup");
+  }
+
+  function updateProtectedInterval(intervalId: string, patch: { start_s_mm?: number; end_s_mm?: number; purpose?: string }) {
+    if (!loaded) {
+      return;
+    }
+    updateProject(
+      {
+        ...loaded.project,
+        setup: {
+          ...loaded.project.setup,
+          protected_intervals: (loaded.project.setup.protected_intervals ?? []).map((interval) =>
+            interval.id === intervalId ? { ...interval, ...patch } : interval,
+          ),
+        },
+      },
+      `Edited ${intervalId}`,
+    );
+  }
+
+  function addStackItem(type: StackItemType) {
+    if (!loaded) {
+      return;
+    }
+    const item = createStackItem(type, loaded.project.stack);
+    const project = insertStackItem(loaded.project, item);
+    updateProject(project, `Added ${item.name}`);
+    setSelectedObjectId(item.id);
+  }
+
+  function moveStackItem(itemId: string, direction: MoveDirection) {
+    if (!loaded) {
+      return;
+    }
+    const item = loaded.project.stack.find((candidate) => candidate.id === itemId);
+    updateProject(reorderStackItem(loaded.project, itemId, direction), `Moved ${item?.name ?? itemId}`);
+  }
+
+  function addPlanningRegion() {
+    if (!loaded) {
+      return;
+    }
+    const region = createPlanningRegion(loaded.project);
+    updateProject(insertPlanningRegion(loaded.project, region), `Added ${region.name}`);
+    setSelectedObjectId(region.id);
+  }
+
+  function addProtectedInterval() {
+    if (!loaded) {
+      return;
+    }
+    const existingIds = new Set((loaded.project.setup.protected_intervals ?? []).map((interval) => interval.id));
+    let suffix = 1;
+    let id = "protect.manual";
+    while (existingIds.has(id)) {
+      suffix += 1;
+      id = `protect.manual_${suffix}`;
+    }
+    const endS = loaded.project.project.datum.s_offset_mm;
+    const interval = {
+      id,
+      purpose: "do_not_machine",
+      start_s_mm: endS - 10,
+      end_s_mm: endS,
+    };
+    updateProject(
+      {
+        ...loaded.project,
+        setup: {
+          ...loaded.project.setup,
+          protected_intervals: [...(loaded.project.setup.protected_intervals ?? []), interval],
+        },
+      },
+      `Added ${id}`,
+    );
+    setSelectedObjectId(id);
+  }
+
   function handleAnchor(anchor: MeasurementAnchor) {
     if (editorMode !== "measure") {
       return;
@@ -279,45 +416,46 @@ export function App() {
             <p>{loaded?.project.project.name ?? "Shaft editor"}</p>
           </div>
         </div>
-        <div className="toolbar" aria-label="Project controls">
-          <button type="button" onClick={() => fileInputRef.current?.click()}>
-            <FileUp aria-hidden="true" />
-            Open
-          </button>
-          <button type="button" onClick={openFromPath}>
-            <FolderOpen aria-hidden="true" />
-            Load Path
-          </button>
-          <button type="button" onClick={loadSampleProject}>
-            <FileDown aria-hidden="true" />
-            Sample
-          </button>
-          <button type="button" onClick={saveProject} disabled={!loaded}>
-            <Save aria-hidden="true" />
-            Save
-          </button>
-          <button type="button" onClick={revalidate} disabled={!loaded}>
-            <CheckCircle2 aria-hidden="true" />
-            Validate
-          </button>
-          <div className="segmented-control" aria-label="Editor mode">
-            <button
-              type="button"
-              className={editorMode === "select" ? "active" : ""}
-              onClick={() => setEditorMode("select")}
-              title="Select"
-            >
-              <MousePointer2 aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className={editorMode === "measure" ? "active" : ""}
-              onClick={() => setEditorMode("measure")}
-              title="Measure"
-            >
-              <Crosshair aria-hidden="true" />
-            </button>
-          </div>
+        <div className="command-ribbon" aria-label="Project commands">
+          <CommandGroup label="File">
+            <CommandButton icon={<FileUp aria-hidden="true" />} label="Open" onClick={() => fileInputRef.current?.click()} />
+            <CommandButton icon={<FolderOpen aria-hidden="true" />} label="Path" onClick={openFromPath} />
+            <CommandButton icon={<FileDown aria-hidden="true" />} label="Sample" onClick={loadSampleProject} />
+            <CommandButton icon={<Save aria-hidden="true" />} label="Save" onClick={saveProject} disabled={!loaded} />
+          </CommandGroup>
+          <CommandGroup label="Create">
+            <CommandButton icon={<Box aria-hidden="true" />} label="Cylinder" onClick={() => addStackItem("cylindrical_section")} disabled={!loaded} />
+            <CommandButton icon={<Cog aria-hidden="true" />} label="Spur" onClick={() => addStackItem("spur_gear")} disabled={!loaded} />
+            <CommandButton icon={<Cog aria-hidden="true" />} label="Helical" onClick={() => addStackItem("helical_gear")} disabled={!loaded} />
+            <CommandButton icon={<Layers aria-hidden="true" />} label="Herringbone" onClick={() => addStackItem("herringbone_gear")} disabled={!loaded} />
+            <CommandButton icon={<CirclePlus aria-hidden="true" />} label="Eccentric" onClick={() => addStackItem("eccentric_section")} disabled={!loaded} />
+            <CommandButton icon={<Layers aria-hidden="true" />} label="Region" onClick={addPlanningRegion} disabled={!loaded} />
+            <CommandButton icon={<ListTree aria-hidden="true" />} label="Protect" onClick={addProtectedInterval} disabled={!loaded} />
+          </CommandGroup>
+          <CommandGroup label="Inspect">
+            <CommandButton icon={<CheckCircle2 aria-hidden="true" />} label="Validate" onClick={revalidate} disabled={!loaded} />
+            <CommandButton icon={<Wrench aria-hidden="true" />} label="Export" disabled title="G-code export shell is tracked separately" />
+            <div className="segmented-control" aria-label="Editor mode">
+              <button
+                type="button"
+                className={editorMode === "select" ? "active" : ""}
+                onClick={() => setEditorMode("select")}
+                title="Select"
+                aria-label="Select mode"
+              >
+                <MousePointer2 aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className={editorMode === "measure" ? "active" : ""}
+                onClick={() => setEditorMode("measure")}
+                title="Measure"
+                aria-label="Measure mode"
+              >
+                <Crosshair aria-hidden="true" />
+              </button>
+            </div>
+          </CommandGroup>
           <input
             ref={fileInputRef}
             className="visually-hidden"
@@ -358,6 +496,7 @@ export function App() {
               selectedObjectId={selectedObjectId}
               diagnostics={loaded.validation.diagnostics}
               onSelect={setSelectedObjectId}
+              onMoveStackItem={moveStackItem}
             />
           ) : (
             <EmptyPanel message="Open a project file to inspect the shaft stack." />
@@ -424,10 +563,21 @@ export function App() {
         <aside className="inspector" aria-label="Inspector">
           <PanelHeader title="Inspector" subtitle={selectedObjectId ?? "Nothing selected"} />
           {loaded && selectedFeature ? (
-            <FeatureInspector feature={selectedFeature} diagnostics={diagnosticsForSelection} />
+            <FeatureInspector
+              feature={selectedFeature}
+              diagnostics={diagnosticsForSelection}
+              onUpdate={(patch) => updateFeature(selectedFeature.id, patch)}
+            />
           ) : loaded && selectedRegion ? (
             <RegionInspector
               region={selectedRegion}
+              onUpdate={(patch) => updatePlanningRegion(selectedRegion.id, (region) => ({ ...region, ...patch }))}
+              onUpdateBounds={(bounds) =>
+                updatePlanningRegion(selectedRegion.id, (region) => ({
+                  ...region,
+                  polygon: rectanglePolygon(bounds),
+                }))
+              }
               onDeleteVertex={(vertexIndex) =>
                 updatePlanningRegion(selectedRegion.id, (region) => {
                   if (region.polygon.length <= 3) {
@@ -441,8 +591,17 @@ export function App() {
                 })
               }
             />
+          ) : loaded && selectedProtectedInterval ? (
+            <ProtectedIntervalInspector
+              interval={selectedProtectedInterval}
+              onUpdate={(patch) => updateProtectedInterval(selectedProtectedInterval.id, patch)}
+            />
+          ) : loaded && selectedObjectId === loaded.project.stock.id ? (
+            <StockInspector stock={loaded.project.stock} onUpdate={updateStock} />
+          ) : loaded && selectedObjectId === loaded.project.setup.id ? (
+            <SetupInspector setup={loaded.project.setup} onUpdate={updateSetup} />
           ) : loaded ? (
-            <ProjectInspector project={loaded.project} selectedObjectId={selectedObjectId} />
+            <ProjectInspector project={loaded.project} onUpdate={updateProjectMetadata} />
           ) : (
             <EmptyPanel message="Select a feature or diagnostic to inspect its data." />
           )}
@@ -476,6 +635,36 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
+function CommandGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="command-group">
+      <span>{label}</span>
+      <div className="command-group-actions">{children}</div>
+    </div>
+  );
+}
+
+function CommandButton({
+  icon,
+  label,
+  onClick,
+  disabled,
+  title,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} title={title ?? label} aria-label={label}>
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
 function EmptyPanel({ message }: { message: string }) {
   return <div className="empty-panel">{message}</div>;
 }
@@ -485,39 +674,108 @@ function FeatureTree({
   selectedObjectId,
   diagnostics,
   onSelect,
+  onMoveStackItem,
 }: {
   project: HobgoblinProject;
   selectedObjectId: string | null;
   diagnostics: ValidationDiagnostic[];
   onSelect: (objectId: string) => void;
+  onMoveStackItem: (itemId: string, direction: MoveDirection) => void;
 }) {
+  const protectedIntervals = project.setup.protected_intervals ?? [];
+  const planningRegions = project.planning_regions ?? [];
   return (
     <div className="tree-list">
+      <div className="tree-section">
+        <span>Setup</span>
+        <button
+          type="button"
+          className={selectedObjectId === project.setup.id ? "tree-item selected" : "tree-item"}
+          onClick={() => onSelect(project.setup.id)}
+        >
+          <span className="tree-title">
+            <Wrench aria-hidden="true" />
+            {project.setup.name}
+          </span>
+          <span>{project.setup.machine_profile_id}</span>
+        </button>
+      </div>
+      <div className="tree-section">
+        <span>Stock</span>
       <button
         type="button"
         className={selectedObjectId === project.stock.id ? "tree-item selected" : "tree-item"}
         onClick={() => onSelect(project.stock.id)}
       >
-        <span className="tree-title">{project.stock.id}</span>
-        <span>{project.stock.material_id}</span>
+          <span className="tree-title">
+            <Box aria-hidden="true" />
+            {project.stock.id}
+          </span>
+          <span>{project.stock.diameter_mm.toFixed(2)} x {project.stock.length_mm.toFixed(2)} mm</span>
       </button>
-      {project.stack.map((item) => {
+      </div>
+      <div className="tree-section">
+        <span>Gear stack</span>
+      {project.stack.map((item, index) => {
         const hasDiagnostics = diagnostics.some((diagnostic) => diagnostic.object_id === item.id);
         return (
-          <button
-            type="button"
+          <div
             key={item.id}
-            className={selectedObjectId === item.id ? "tree-item selected" : "tree-item"}
-            onClick={() => onSelect(item.id)}
+            className={selectedObjectId === item.id ? "tree-item tree-item-with-actions selected" : "tree-item tree-item-with-actions"}
           >
-            <span className="tree-title">
-              {hasDiagnostics ? <AlertTriangle aria-hidden="true" /> : null}
-              {item.name}
-            </span>
-            <span>{featureTypeLabel(item.type)}</span>
-          </button>
+            <button type="button" className="tree-item-main" onClick={() => onSelect(item.id)}>
+              <span className="tree-title">
+                {hasDiagnostics ? <AlertTriangle aria-hidden="true" /> : <Cog aria-hidden="true" />}
+                {item.name}
+              </span>
+              <span>{featureTypeLabel(item.type)} / {item.length_mm.toFixed(2)} mm</span>
+            </button>
+            <div className="tree-row-actions">
+              <button type="button" onClick={() => onMoveStackItem(item.id, "up")} disabled={index === 0} title="Move up" aria-label={`Move ${item.name} up`}>
+                <MoveUp aria-hidden="true" />
+              </button>
+              <button type="button" onClick={() => onMoveStackItem(item.id, "down")} disabled={index === project.stack.length - 1} title="Move down" aria-label={`Move ${item.name} down`}>
+                <MoveDown aria-hidden="true" />
+              </button>
+            </div>
+          </div>
         );
       })}
+      </div>
+      <div className="tree-section">
+        <span>Planning regions</span>
+        {planningRegions.map((region) => (
+          <button
+            type="button"
+            key={region.id}
+            className={selectedObjectId === region.id ? "tree-item selected" : "tree-item"}
+            onClick={() => onSelect(region.id)}
+          >
+            <span className="tree-title">
+              <Layers aria-hidden="true" />
+              {region.name}
+            </span>
+            <span>{region.purpose} / stage {region.stage}</span>
+          </button>
+        ))}
+      </div>
+      <div className="tree-section">
+        <span>Protected intervals</span>
+        {protectedIntervals.map((interval) => (
+          <button
+            type="button"
+            key={interval.id}
+            className={selectedObjectId === interval.id ? "tree-item selected" : "tree-item"}
+            onClick={() => onSelect(interval.id)}
+          >
+            <span className="tree-title">
+              <ListTree aria-hidden="true" />
+              {interval.id}
+            </span>
+            <span>{interval.purpose} / {interval.start_s_mm.toFixed(2)}-{interval.end_s_mm.toFixed(2)} mm</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -907,24 +1165,108 @@ function AxisAlignedHandles({
   );
 }
 
+function FieldGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <fieldset className="field-group">
+      <legend>{title}</legend>
+      {children}
+    </fieldset>
+  );
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="form-field">
+      <span>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.currentTarget.value)} />
+    </label>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  step = 0.1,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  step?: number;
+}) {
+  return (
+    <label className="form-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        step={step}
+        value={Number.isFinite(value) ? value : 0}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+      />
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="form-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.currentTarget.value)}>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ReadonlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="readonly-field">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function FeatureInspector({
   feature,
   diagnostics,
+  onUpdate,
 }: {
   feature: StackItem;
   diagnostics: ValidationDiagnostic[];
+  onUpdate: (patch: Partial<StackItem>) => void;
 }) {
   return (
     <div className="inspector-content">
-      <dl>
-        <dt>Type</dt>
-        <dd>{featureTypeLabel(feature.type)}</dd>
-        <dt>Length</dt>
-        <dd>{feature.length_mm.toFixed(3)} mm</dd>
-        <dt>ID</dt>
-        <dd>{feature.id}</dd>
-      </dl>
-      <pre>{JSON.stringify(feature, null, 2)}</pre>
+      <FieldGroup title="Feature">
+        <ReadonlyField label="Type" value={featureTypeLabel(feature.type)} />
+        <ReadonlyField label="ID" value={feature.id} />
+        <TextField label="Name" value={feature.name} onChange={(name) => onUpdate({ name })} />
+        <NumberField label="Length mm" value={feature.length_mm} onChange={(length_mm) => onUpdate({ length_mm })} />
+      </FieldGroup>
+      <FeatureTypeFields feature={feature} onUpdate={onUpdate} />
       {diagnostics.length > 0 ? (
         <div className="selection-diagnostics">
           {diagnostics.map((diagnostic, index) => (
@@ -936,38 +1278,112 @@ function FeatureInspector({
   );
 }
 
+function FeatureTypeFields({
+  feature,
+  onUpdate,
+}: {
+  feature: StackItem;
+  onUpdate: (patch: Partial<StackItem>) => void;
+}) {
+  if (feature.type === "cylindrical_section") {
+    return (
+      <FieldGroup title="Cylinder">
+        <NumberField label="Radius mm" value={numberValue(feature.radius_mm)} onChange={(radius_mm) => onUpdate({ radius_mm })} />
+      </FieldGroup>
+    );
+  }
+  if (feature.type === "eccentric_section") {
+    return (
+      <FieldGroup title="Eccentric">
+        <NumberField label="Radius mm" value={numberValue(feature.radius_mm)} onChange={(radius_mm) => onUpdate({ radius_mm })} />
+        <NumberField label="Offset Y mm" value={numberValue(feature.offset_y_mm)} onChange={(offset_y_mm) => onUpdate({ offset_y_mm })} />
+        <NumberField label="Offset Z mm" value={numberValue(feature.offset_z_mm)} onChange={(offset_z_mm) => onUpdate({ offset_z_mm })} />
+      </FieldGroup>
+    );
+  }
+  if (feature.type === "spur_gear") {
+    return <SpurGearFields gear={feature} onUpdate={(patch) => onUpdate(patch)} title="Spur gear" />;
+  }
+  if (feature.type === "helical_gear") {
+    const spur = objectValue(feature.spur);
+    return (
+      <>
+        <FieldGroup title="Helix">
+          <NumberField label="Helix angle deg" value={numberValue(feature.helix_angle_deg)} onChange={(helix_angle_deg) => onUpdate({ helix_angle_deg })} />
+          <SelectField label="Hand" value={stringValue(feature.hand, "right")} options={["left", "right"]} onChange={(hand) => onUpdate({ hand })} />
+        </FieldGroup>
+        <SpurGearFields
+          title="Nested spur geometry"
+          gear={spur}
+          onUpdate={(patch) => onUpdate({ spur: { ...spur, ...patch } })}
+        />
+      </>
+    );
+  }
+  if (feature.type === "herringbone_gear") {
+    return (
+      <FieldGroup title="Herringbone">
+        <NumberField label="Center relief mm" value={numberValue(feature.center_relief_width_mm)} onChange={(center_relief_width_mm) => onUpdate({ center_relief_width_mm })} />
+        <ReadonlyField label="Left/right gears" value="Edit nested geometry in a later detailed inspector" />
+      </FieldGroup>
+    );
+  }
+  return <ReadonlyField label="Geometry" value="Unsupported feature form" />;
+}
+
+function SpurGearFields({
+  title,
+  gear,
+  onUpdate,
+}: {
+  title: string;
+  gear: Record<string, unknown>;
+  onUpdate: (patch: Record<string, unknown>) => void;
+}) {
+  return (
+    <FieldGroup title={title}>
+      <NumberField label="Module mm" value={numberValue(gear.module_mm)} onChange={(module_mm) => onUpdate({ module_mm })} />
+      <NumberField label="Teeth" value={numberValue(gear.tooth_count)} step={1} onChange={(tooth_count) => onUpdate({ tooth_count: Math.max(1, Math.round(tooth_count)) })} />
+      <NumberField label="Pressure angle deg" value={numberValue(gear.pressure_angle_deg, 20)} onChange={(pressure_angle_deg) => onUpdate({ pressure_angle_deg })} />
+      <NumberField label="Profile shift" value={numberValue(gear.profile_shift)} onChange={(profile_shift) => onUpdate({ profile_shift })} />
+      <NumberField label="Addendum coeff" value={numberValue(gear.addendum_coeff, 1)} onChange={(addendum_coeff) => onUpdate({ addendum_coeff })} />
+      <NumberField label="Dedendum coeff" value={numberValue(gear.dedendum_coeff, 1.25)} onChange={(dedendum_coeff) => onUpdate({ dedendum_coeff })} />
+      <NumberField label="Backlash mm" value={numberValue(gear.backlash_mm)} onChange={(backlash_mm) => onUpdate({ backlash_mm })} />
+      <NumberField label="Phase deg" value={numberValue(gear.phase_deg)} onChange={(phase_deg) => onUpdate({ phase_deg })} />
+      <ReadonlyField label="Outside radius" value={formatMm(radiusForItem(gear as StackItem))} />
+    </FieldGroup>
+  );
+}
+
 function RegionInspector({
   region,
+  onUpdate,
+  onUpdateBounds,
   onDeleteVertex,
 }: {
   region: PlanningRegion;
+  onUpdate: (patch: Partial<PlanningRegion>) => void;
+  onUpdateBounds: (bounds: RegionBounds) => void;
   onDeleteVertex: (vertexIndex: number) => void;
 }) {
   const bounds = regionBounds(region);
   return (
     <div className="inspector-content">
-      <dl>
-        <dt>Region</dt>
-        <dd>{region.name}</dd>
-        <dt>Purpose</dt>
-        <dd>{region.purpose}</dd>
-        <dt>Stage</dt>
-        <dd>{region.stage}</dd>
-        <dt>Shape</dt>
-        <dd>{isAxisAlignedRectangle(region) ? "Axis-aligned rectangle" : "Polygon"}</dd>
-        {bounds ? (
-          <>
-            <dt>S span</dt>
-            <dd>
-              {bounds.minS.toFixed(3)} - {bounds.maxS.toFixed(3)} mm
-            </dd>
-            <dt>R span</dt>
-            <dd>
-              {bounds.minR.toFixed(3)} - {bounds.maxR.toFixed(3)} mm
-            </dd>
-          </>
-        ) : null}
-      </dl>
+      <FieldGroup title="Planning region">
+        <ReadonlyField label="ID" value={region.id} />
+        <TextField label="Name" value={region.name} onChange={(name) => onUpdate({ name })} />
+        <TextField label="Purpose" value={region.purpose} onChange={(purpose) => onUpdate({ purpose })} />
+        <NumberField label="Stage" value={region.stage} step={1} onChange={(stage) => onUpdate({ stage: Math.round(stage) })} />
+        <ReadonlyField label="Shape" value={isAxisAlignedRectangle(region) ? "Axis-aligned rectangle" : "Polygon"} />
+      </FieldGroup>
+      {bounds && isAxisAlignedRectangle(region) ? (
+        <FieldGroup title="Bounds">
+          <NumberField label="Start s mm" value={bounds.minS} onChange={(minS) => onUpdateBounds({ ...bounds, minS })} />
+          <NumberField label="End s mm" value={bounds.maxS} onChange={(maxS) => onUpdateBounds({ ...bounds, maxS })} />
+          <NumberField label="Inner r mm" value={bounds.minR} onChange={(minR) => onUpdateBounds({ ...bounds, minR })} />
+          <NumberField label="Outer r mm" value={bounds.maxR} onChange={(maxR) => onUpdateBounds({ ...bounds, maxR })} />
+        </FieldGroup>
+      ) : null}
       <div className="vertex-table">
         {region.polygon.map((point, index) => (
           <div key={`${region.id}-${index}`} className="vertex-row">
@@ -984,39 +1400,91 @@ function RegionInspector({
   );
 }
 
-function ProjectInspector({
-  project,
-  selectedObjectId,
+function ProtectedIntervalInspector({
+  interval,
+  onUpdate,
 }: {
-  project: HobgoblinProject;
-  selectedObjectId: string | null;
+  interval: NonNullable<HobgoblinProject["setup"]["protected_intervals"]>[number];
+  onUpdate: (patch: { start_s_mm?: number; end_s_mm?: number; purpose?: string }) => void;
 }) {
-  const selectedRegion = (project.planning_regions ?? []).find(
-    (region) => region.id === selectedObjectId,
-  );
   return (
     <div className="inspector-content">
-      {selectedRegion ? (
-        <dl>
-          <dt>Region</dt>
-          <dd>{selectedRegion.name}</dd>
-          <dt>Stage</dt>
-          <dd>{selectedRegion.stage}</dd>
-          <dt>Purpose</dt>
-          <dd>{selectedRegion.purpose}</dd>
-        </dl>
-      ) : (
-        <dl>
-          <dt>Project</dt>
-          <dd>{project.project.id}</dd>
-          <dt>Machine</dt>
-          <dd>{project.setup.machine_profile_id}</dd>
-          <dt>Stock</dt>
-          <dd>{project.stock.id}</dd>
-        </dl>
-      )}
+      <FieldGroup title="Protected interval">
+        <ReadonlyField label="ID" value={interval.id} />
+        <TextField label="Purpose" value={interval.purpose} onChange={(purpose) => onUpdate({ purpose })} />
+        <NumberField label="Start s mm" value={interval.start_s_mm} onChange={(start_s_mm) => onUpdate({ start_s_mm })} />
+        <NumberField label="End s mm" value={interval.end_s_mm} onChange={(end_s_mm) => onUpdate({ end_s_mm })} />
+      </FieldGroup>
     </div>
   );
+}
+
+function StockInspector({
+  stock,
+  onUpdate,
+}: {
+  stock: HobgoblinProject["stock"];
+  onUpdate: (patch: Partial<HobgoblinProject["stock"]>) => void;
+}) {
+  return (
+    <div className="inspector-content">
+      <FieldGroup title="Stock">
+        <ReadonlyField label="ID" value={stock.id} />
+        <NumberField label="Diameter mm" value={stock.diameter_mm} onChange={(diameter_mm) => onUpdate({ diameter_mm })} />
+        <NumberField label="Length mm" value={stock.length_mm} onChange={(length_mm) => onUpdate({ length_mm })} />
+        <TextField label="Material" value={stock.material_id} onChange={(material_id) => onUpdate({ material_id })} />
+      </FieldGroup>
+    </div>
+  );
+}
+
+function SetupInspector({
+  setup,
+  onUpdate,
+}: {
+  setup: HobgoblinProject["setup"];
+  onUpdate: (patch: Partial<HobgoblinProject["setup"]>) => void;
+}) {
+  return (
+    <div className="inspector-content">
+      <FieldGroup title="Setup">
+        <ReadonlyField label="ID" value={setup.id} />
+        <TextField label="Name" value={setup.name} onChange={(name) => onUpdate({ name })} />
+        <TextField label="Machine" value={setup.machine_profile_id} onChange={(machine_profile_id) => onUpdate({ machine_profile_id })} />
+      </FieldGroup>
+    </div>
+  );
+}
+
+function ProjectInspector({
+  project,
+  onUpdate,
+}: {
+  project: HobgoblinProject;
+  onUpdate: (patch: Partial<HobgoblinProject["project"]>) => void;
+}) {
+  return (
+    <div className="inspector-content">
+      <FieldGroup title="Project">
+        <ReadonlyField label="ID" value={project.project.id} />
+        <TextField label="Name" value={project.project.name} onChange={(name) => onUpdate({ name })} />
+        <ReadonlyField label="Units" value={project.unit_system} />
+        <ReadonlyField label="Machine" value={project.setup.machine_profile_id} />
+      </FieldGroup>
+    </div>
+  );
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function numberValue(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
 }
 
 function DiagnosticsList({

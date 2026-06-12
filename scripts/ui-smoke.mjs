@@ -16,6 +16,9 @@ try {
   await page.getByText("Simple spur stack").waitFor();
   await page.locator(".feature-tree").getByText("20T spur gear").waitFor();
   await page.getByText("0 errors, 0 warnings").waitFor();
+  const ribbon = page.locator(".command-ribbon");
+  await ribbon.getByRole("button", { name: "Cylinder", exact: true }).waitFor();
+  await ribbon.getByRole("button", { name: "Spur", exact: true }).waitFor();
 
   const regionCount = await page.locator(".region-polygon").count();
   const vertexCount = await page.locator(".vertex-handle").count();
@@ -29,6 +32,24 @@ try {
   if (protectedIntervalCount < 2) {
     throw new Error(`expected chuck and tailstock protected intervals, got ${protectedIntervalCount}`);
   }
+
+  await ribbon.getByRole("button", { name: "Cylinder", exact: true }).click();
+  await page.locator(".feature-tree").getByText("Cylindrical section").waitFor();
+  const profileCountAfterCreate = await page.locator(".profile").count();
+  if (profileCountAfterCreate < 4) {
+    throw new Error(`expected added stack feature to appear in viewport, got profiles=${profileCountAfterCreate}`);
+  }
+
+  await page.locator(".feature-tree").getByText("stock.brass_16x100").click();
+  await page.locator(".inspector").getByLabel("Diameter mm").fill("17");
+  await page.getByText("17.00 mm stock").waitFor();
+
+  await page.locator(".feature-tree").getByText("20T spur gear").click();
+  await page.locator(".inspector").getByLabel("Module mm").fill("0.6");
+  await page.locator(".inspector").getByText("Outside radius").waitFor();
+
+  await page.getByLabel("Move Left journal down").click();
+  await page.getByText("Moved Left journal").waitFor();
 
   await page.locator(".region-polygon").nth(1).click();
   await page.getByText("Axis-aligned rectangle").waitFor();
@@ -46,7 +67,7 @@ try {
   await page.getByTitle("Measure").click();
   await page.locator(".vertex-handle").first().click();
   await page.locator(".vertex-handle").nth(1).click();
-  await page.getByText("ds").waitFor();
+  await page.locator(".measurement-overlay").getByText("ds").waitFor();
 } finally {
   await browser.close();
 }
