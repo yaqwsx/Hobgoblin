@@ -122,6 +122,16 @@ try {
     stockBoxBeforeNavigation.y < shaftAxisY && stockBoxBeforeNavigation.y + stockBoxBeforeNavigation.height > shaftAxisY,
     "expected stock material to span both sides of the shaft axis",
   );
+  await page.locator(".viewport-controls").getByLabel("Zoom out").click();
+  await page.getByText("0.7x").waitFor();
+  const zoomedOutStockBox = await page.locator(".stock-rect").boundingBox();
+  assert(zoomedOutStockBox !== null, "expected stock material to be measurable after zooming out");
+  assert(
+    zoomedOutStockBox.width < stockBoxBeforeNavigation.width,
+    `expected zooming out below fit to make stock smaller, before=${stockBoxBeforeNavigation.width.toFixed(2)} after=${zoomedOutStockBox.width.toFixed(2)}`,
+  );
+  await page.locator(".viewport-controls").getByLabel("Fit stack").click();
+  await page.getByText("1.0x").waitFor();
   await page.locator(".viewport-controls").getByLabel("Zoom in").click();
   await page.getByText("1.5x").waitFor();
   await page.locator(".viewport-controls").getByLabel("Pan right").click();

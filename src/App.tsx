@@ -1139,12 +1139,16 @@ function PlanningEditor({
   const domainRangeS = Math.max(1, domainMaxS - domainMinS);
   const visibleRangeS = domainRangeS / viewZoom;
   const domainCenterS = (domainMinS + domainMaxS) / 2;
-  const visibleCenterS = Math.min(
-    domainMaxS - visibleRangeS / 2,
-    Math.max(domainMinS + visibleRangeS / 2, domainCenterS + viewCenterOffsetS),
-  );
-  const minS = visibleRangeS >= domainRangeS ? domainMinS : visibleCenterS - visibleRangeS / 2;
-  const maxS = visibleRangeS >= domainRangeS ? domainMaxS : visibleCenterS + visibleRangeS / 2;
+  const clampVisibleCenter = (domainMin: number, domainMax: number, visibleRange: number, center: number) => {
+    const domainRange = domainMax - domainMin;
+    if (visibleRange >= domainRange) {
+      return (domainMin + domainMax) / 2;
+    }
+    return Math.min(domainMax - visibleRange / 2, Math.max(domainMin + visibleRange / 2, center));
+  };
+  const visibleCenterS = clampVisibleCenter(domainMinS, domainMaxS, visibleRangeS, domainCenterS + viewCenterOffsetS);
+  const minS = visibleCenterS - visibleRangeS / 2;
+  const maxS = visibleCenterS + visibleRangeS / 2;
   const sRange = Math.max(1, maxS - minS);
   const maxProfileRadiusWithMargin = Math.max(1, maxProfileRadius) * 1.12;
   const domainMinR = -maxProfileRadiusWithMargin;
@@ -1152,12 +1156,9 @@ function PlanningEditor({
   const domainRangeR = domainMaxR - domainMinR;
   const visibleRangeR = domainRangeR / viewZoom;
   const domainCenterR = (domainMinR + domainMaxR) / 2;
-  const visibleCenterR = Math.min(
-    domainMaxR - visibleRangeR / 2,
-    Math.max(domainMinR + visibleRangeR / 2, domainCenterR + viewCenterOffsetR),
-  );
-  const minR = visibleRangeR >= domainRangeR ? domainMinR : visibleCenterR - visibleRangeR / 2;
-  const maxR = visibleRangeR >= domainRangeR ? domainMaxR : visibleCenterR + visibleRangeR / 2;
+  const visibleCenterR = clampVisibleCenter(domainMinR, domainMaxR, visibleRangeR, domainCenterR + viewCenterOffsetR);
+  const minR = visibleCenterR - visibleRangeR / 2;
+  const maxR = visibleCenterR + visibleRangeR / 2;
   const rRange = Math.max(1, maxR - minR);
   const viewWidth = 1000;
   const viewHeight = 420;
@@ -1220,7 +1221,7 @@ function PlanningEditor({
   };
 
   const setZoom = (nextZoom: number) => {
-    const clampedZoom = Math.min(8, Math.max(1, nextZoom));
+    const clampedZoom = Math.min(8, Math.max(0.25, nextZoom));
     setViewZoom(clampedZoom);
     setViewCenterOffsetS((current) => clampCenterOffsetS(current, clampedZoom));
     setViewCenterOffsetR((current) => clampCenterOffsetR(current, clampedZoom));
@@ -1259,7 +1260,7 @@ function PlanningEditor({
   }
 
   function zoomToClientPoint(clientX: number, clientY: number, nextZoom: number) {
-    const clampedZoom = Math.min(8, Math.max(1, nextZoom));
+    const clampedZoom = Math.min(8, Math.max(0.25, nextZoom));
     if (clampedZoom === viewZoom) {
       return;
     }
@@ -1273,8 +1274,8 @@ function PlanningEditor({
     const nextCenterS = cursorS + (0.5 - cursorRatio) * nextVisibleRangeS;
     const nextCenterR = cursorR + (cursorRatioY - 0.5) * nextVisibleRangeR;
     setViewZoom(clampedZoom);
-    setViewCenterOffsetS(clampedZoom <= 1 ? 0 : clampCenterOffsetS(nextCenterS - domainCenterS, clampedZoom));
-    setViewCenterOffsetR(clampedZoom <= 1 ? 0 : clampCenterOffsetR(nextCenterR - domainCenterR, clampedZoom));
+    setViewCenterOffsetS(clampCenterOffsetS(nextCenterS - domainCenterS, clampedZoom));
+    setViewCenterOffsetR(clampCenterOffsetR(nextCenterR - domainCenterR, clampedZoom));
   }
 
   function applyPan(clientX: number, clientY: number, plotCssWidth: number, plotCssHeight: number) {
@@ -1315,7 +1316,7 @@ function PlanningEditor({
           <button type="button" onClick={() => panView(0, -1)} disabled={viewZoom <= 1} title="Pan down" aria-label="Pan down">
             <ArrowDown aria-hidden="true" />
           </button>
-          <button type="button" onClick={() => setZoom(viewZoom / 1.5)} disabled={viewZoom <= 1} title="Zoom out" aria-label="Zoom out">
+          <button type="button" onClick={() => setZoom(viewZoom / 1.5)} disabled={viewZoom <= 0.25} title="Zoom out" aria-label="Zoom out">
             <ZoomOut aria-hidden="true" />
           </button>
           <button type="button" onClick={() => setZoom(viewZoom * 1.5)} disabled={viewZoom >= 8} title="Zoom in" aria-label="Zoom in">
