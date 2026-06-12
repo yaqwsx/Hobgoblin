@@ -56,4 +56,14 @@ cargo run -p hobgoblin-cli -- export-gcode \
   --material examples/library/brass.material.json
 ```
 
+The desktop shell is a Tauri + React/TypeScript app:
+
+```sh
+npm ci
+npm run build
+npm run dev
+```
+
+The frontend build is covered by CI. Native `npm run tauri dev` requires the platform Tauri/WebKit system dependencies. With the current Rust 1.96 toolchain, `cargo check --manifest-path src-tauri/Cargo.toml` is blocked by an upstream `cookie` crate compatibility error in Tauri's Linux dependency graph; the frontend shell and Tauri command sources are still present for native builds once that dependency stack is usable.
+
 CI runs these checks on pushes to `main`, pull requests, and manual dispatch.
