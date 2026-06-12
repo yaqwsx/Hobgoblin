@@ -97,6 +97,8 @@ pub fn simulate_abstract_path_with_tool(
     let mut diagnostics = Vec::new();
     let mut rapid_segments = Vec::new();
     let mut cut_segments = Vec::new();
+    let mut validated_rapid_segments = Vec::new();
+    let mut validated_cut_segments = Vec::new();
     let stock_start_x_mm = project.project.datum.s_offset_mm;
     let stock_end_x_mm = stock_start_x_mm + project.stock.length_mm;
     let stock_radius_mm = project.stock.diameter_mm / 2.0;
@@ -113,18 +115,19 @@ pub fn simulate_abstract_path_with_tool(
             } => {
                 position = update_position(position, *x_mm, *y_mm, *z_mm, *a_deg);
                 let segment = build_segment(move_index, before, position);
+                validate_segment(
+                    project,
+                    path,
+                    move_index,
+                    &segment,
+                    false,
+                    stock_start_x_mm,
+                    stock_end_x_mm,
+                    stock_radius_mm,
+                    &mut diagnostics,
+                );
+                validated_rapid_segments.push(segment.clone());
                 if segment.has_drawable_start() {
-                    validate_segment(
-                        project,
-                        path,
-                        move_index,
-                        &segment,
-                        false,
-                        stock_start_x_mm,
-                        stock_end_x_mm,
-                        stock_radius_mm,
-                        &mut diagnostics,
-                    );
                     rapid_segments.push(segment);
                 }
             }
@@ -137,18 +140,19 @@ pub fn simulate_abstract_path_with_tool(
             } => {
                 position = update_position(position, *x_mm, *y_mm, *z_mm, *a_deg);
                 let segment = build_segment(move_index, before, position);
+                validate_segment(
+                    project,
+                    path,
+                    move_index,
+                    &segment,
+                    true,
+                    stock_start_x_mm,
+                    stock_end_x_mm,
+                    stock_radius_mm,
+                    &mut diagnostics,
+                );
+                validated_cut_segments.push(segment.clone());
                 if segment.has_drawable_start() {
-                    validate_segment(
-                        project,
-                        path,
-                        move_index,
-                        &segment,
-                        true,
-                        stock_start_x_mm,
-                        stock_end_x_mm,
-                        stock_radius_mm,
-                        &mut diagnostics,
-                    );
                     cut_segments.push(segment);
                 }
             }
@@ -156,7 +160,12 @@ pub fn simulate_abstract_path_with_tool(
         }
     }
 
-    let summary = build_summary(&rapid_segments, &cut_segments);
+    let summary = build_summary(
+        &rapid_segments,
+        &cut_segments,
+        &validated_rapid_segments,
+        &validated_cut_segments,
+    );
     if let Some(tool) = tool {
         validate_tool_against_path(tool, path, &summary, &mut diagnostics);
     }
@@ -293,20 +302,22 @@ fn validate_segment(
 }
 
 fn segment_intersects_interval(segment: &PreviewSegment, protected: &ProtectedInterval) -> bool {
-    let Some(x_start_mm) = segment.x_start_mm else {
+    let mut s_values = [segment.s_start_mm, segment.s_end_mm].into_iter().flatten();
+    let Some(first_s_mm) = s_values.next() else {
         return false;
     };
-    let Some(x_end_mm) = segment.x_end_mm else {
-        return false;
-    };
-    let segment_start_mm = x_start_mm.min(x_end_mm);
-    let segment_end_mm = x_start_mm.max(x_end_mm);
+    let (segment_start_mm, segment_end_mm) = s_values.fold(
+        (first_s_mm, first_s_mm),
+        |(current_min, current_max), s_mm| (current_min.min(s_mm), current_max.max(s_mm)),
+    );
     segment_start_mm < protected.end_s_mm && segment_end_mm > protected.start_s_mm
 }
 
 fn build_summary(
     rapid_segments: &[PreviewSegment],
     cut_segments: &[PreviewSegment],
+    validated_rapid_segments: &[PreviewSegment],
+    validated_cut_segments: &[PreviewSegment],
 ) -> SimulationSummary {
     let mut min_x_mm: Option<f64> = None;
     let mut max_x_mm: Option<f64> = None;
@@ -314,7 +325,10 @@ fn build_summary(
     let mut max_z_mm: Option<f64> = None;
     let mut max_cut_depth_mm = 0.0;
 
-    for segment in rapid_segments.iter().chain(cut_segments) {
+    for segment in validated_rapid_segments
+        .iter()
+        .chain(validated_cut_segments)
+    {
         for x_mm in [segment.x_start_mm, segment.x_end_mm].into_iter().flatten() {
             min_x_mm = Some(min_x_mm.map_or(x_mm, |current| current.min(x_mm)));
             max_x_mm = Some(max_x_mm.map_or(x_mm, |current| current.max(x_mm)));
@@ -324,7 +338,7 @@ fn build_summary(
             max_z_mm = Some(max_z_mm.map_or(z_mm, |current| current.max(z_mm)));
         }
     }
-    for segment in cut_segments {
+    for segment in validated_cut_segments {
         for r_mm in [segment.r_start_mm, segment.r_end_mm].into_iter().flatten() {
             max_cut_depth_mm = f64::max(max_cut_depth_mm, (-r_mm).max(0.0));
         }
@@ -364,7 +378,9 @@ fn validate_tool_against_path(
                     ),
                 ));
             }
-            let required_cut_diameter_mm = required_depth_mm * 2.0;
+            let half_angle_rad = tool.included_angle_deg.to_radians() / 2.0;
+            let required_cut_diameter_mm =
+                tool.tip_flat_width_mm + 2.0 * required_depth_mm * half_angle_rad.tan();
             if required_cut_diameter_mm > tool.max_cut_diameter_mm {
                 diagnostics.push(tool_diagnostic(
                     tool.id.clone(),
@@ -498,6 +514,32 @@ mod tests {
     }
 
     #[test]
+    fn validates_first_move_endpoint_even_when_preview_segment_is_skipped() {
+        let project = sample_project();
+        let path = AbstractPath {
+            id: "path.test.first_move".to_string(),
+            operation_id: "op.test".to_string(),
+            moves: vec![AbstractMove::Rapid {
+                x_mm: Some(120.0),
+                y_mm: None,
+                z_mm: Some(0.0),
+                a_deg: None,
+            }],
+        };
+
+        let result = simulate_abstract_path(&project, &path);
+
+        assert!(result.has_errors());
+        assert_eq!(result.preview_layers[0].segments.len(), 0);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.move_index == Some(0)
+                && diagnostic.message.contains("outside stock bounds")));
+        assert_eq!(result.summary.max_x_mm, Some(120.0));
+    }
+
+    #[test]
     fn virtual_rack_y_is_not_projected_radial_axis() {
         let project = sample_project();
         let path = AbstractPath {
@@ -574,6 +616,50 @@ mod tests {
         }));
         assert!(result.diagnostics.iter().any(|diagnostic| {
             diagnostic.object_id.as_deref() == Some("tool.too_small")
+                && diagnostic.message.contains("max cut diameter")
+        }));
+    }
+
+    #[test]
+    fn uses_v_cutter_angle_and_tip_flat_for_required_cut_diameter() {
+        let project = sample_project();
+        let tool = Tool::VCutter(VCutter {
+            id: "tool.wide.too_small".to_string(),
+            name: "Wide V cutter with insufficient diameter".to_string(),
+            included_angle_deg: 120.0,
+            tip_flat_width_mm: 0.4,
+            max_cut_diameter_mm: 2.0,
+            flute_length_mm: 10.0,
+            shank_diameter_mm: 3.175,
+            stickout_mm: 12.0,
+            holder_diameter_mm: 12.0,
+            holder_length_mm: 20.0,
+        });
+        let path = AbstractPath {
+            id: "path.test.v_geometry".to_string(),
+            operation_id: "op.test".to_string(),
+            moves: vec![
+                AbstractMove::Rapid {
+                    x_mm: Some(20.0),
+                    y_mm: None,
+                    z_mm: Some(1.0),
+                    a_deg: None,
+                },
+                AbstractMove::LinearCut {
+                    x_mm: Some(22.0),
+                    y_mm: None,
+                    z_mm: Some(-0.5),
+                    a_deg: None,
+                    feed_mm_min: 100.0,
+                },
+            ],
+        };
+
+        let result = simulate_abstract_path_with_tool(&project, &path, Some(&tool));
+
+        assert!(result.has_errors());
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.object_id.as_deref() == Some("tool.wide.too_small")
                 && diagnostic.message.contains("max cut diameter")
         }));
     }
