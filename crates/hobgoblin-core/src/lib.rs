@@ -306,6 +306,13 @@ pub fn compute_stack_intervals(stack: &[StackItem], datum_s_offset_mm: f64) -> V
 pub fn validate_project(project: &Project) -> ValidationReport {
     let mut diagnostics = Vec::new();
 
+    if project.project.name.trim().is_empty() {
+        diagnostics.push(Diagnostic::error(
+            Some(project.project.id.clone()),
+            "project name must not be empty",
+        ));
+    }
+
     if project.schema_version != CURRENT_SCHEMA_VERSION {
         diagnostics.push(Diagnostic::error(
             None,
@@ -323,6 +330,21 @@ pub fn validate_project(project: &Project) -> ValidationReport {
         ));
     }
 
+    if project.setup.name.trim().is_empty() {
+        diagnostics.push(Diagnostic::error(
+            Some(project.setup.id.clone()),
+            "setup name must not be empty",
+        ));
+    }
+    if project.setup.machine_profile_id.trim().is_empty() {
+        diagnostics.push(Diagnostic::error(
+            Some(project.setup.id.clone()),
+            "setup machine profile id must not be empty",
+        ));
+    }
+
+    validate_tailstock(&mut diagnostics, &project.setup);
+
     validate_positive(
         &mut diagnostics,
         Some(project.stock.id.clone()),
@@ -335,6 +357,12 @@ pub fn validate_project(project: &Project) -> ValidationReport {
         project.stock.length_mm,
         "stock length must be positive",
     );
+    if project.stock.material_id.trim().is_empty() {
+        diagnostics.push(Diagnostic::error(
+            Some(project.stock.id.clone()),
+            "stock material id must not be empty",
+        ));
+    }
 
     let mut ids = HashSet::new();
     collect_unique_id(&mut diagnostics, &mut ids, &project.project.id);
@@ -342,6 +370,12 @@ pub fn validate_project(project: &Project) -> ValidationReport {
     collect_unique_id(&mut diagnostics, &mut ids, &project.stock.id);
 
     let intervals = compute_stack_intervals(&project.stack, project.project.datum.s_offset_mm);
+    if project.stack.is_empty() {
+        diagnostics.push(Diagnostic::error(
+            Some(project.project.id.clone()),
+            "project stack must contain at least one item",
+        ));
+    }
     let interval_by_item: HashMap<_, _> = intervals
         .iter()
         .map(|interval| (interval.item_id.as_str(), interval))
@@ -380,6 +414,17 @@ pub fn validate_project(project: &Project) -> ValidationReport {
             protected.end_s_mm,
             "protected interval",
         );
+        if !matches!(protected.purpose, ProtectedPurpose::ChuckGrip) {
+            validate_interval_within_stock(
+                &mut diagnostics,
+                Some(protected.id.clone()),
+                protected.start_s_mm,
+                protected.end_s_mm,
+                project.project.datum.s_offset_mm,
+                project.stock.length_mm,
+                "protected interval",
+            );
+        }
     }
 
     for region in &project.planning_regions {
@@ -389,6 +434,20 @@ pub fn validate_project(project: &Project) -> ValidationReport {
                 Some(region.id.clone()),
                 "planning region polygon must contain at least three points",
             ));
+        }
+        for point in &region.polygon {
+            if !point.s_mm.is_finite() || !point.r_mm.is_finite() {
+                diagnostics.push(Diagnostic::error(
+                    Some(region.id.clone()),
+                    "planning region polygon points must be finite",
+                ));
+            }
+            if point.r_mm < 0.0 {
+                diagnostics.push(Diagnostic::error(
+                    Some(region.id.clone()),
+                    "planning region radius coordinates must be non-negative",
+                ));
+            }
         }
         for feature_id in &region.allowed_feature_ids {
             if !interval_by_item.contains_key(feature_id.as_str()) {
@@ -403,6 +462,32 @@ pub fn validate_project(project: &Project) -> ValidationReport {
     ValidationReport {
         diagnostics,
         intervals,
+    }
+}
+
+fn validate_tailstock(diagnostics: &mut Vec<Diagnostic>, setup: &Setup) {
+    let tailstock = &setup.workholding.tailstock;
+    match (
+        tailstock.enabled,
+        tailstock.protected_start_s_mm,
+        tailstock.protected_end_s_mm,
+    ) {
+        (true, Some(start), Some(end)) => validate_interval(
+            diagnostics,
+            Some(setup.id.clone()),
+            start,
+            end,
+            "tailstock protected interval",
+        ),
+        (true, _, _) => diagnostics.push(Diagnostic::error(
+            Some(setup.id.clone()),
+            "enabled tailstock must define protected start and end",
+        )),
+        (false, Some(_), _) | (false, _, Some(_)) => diagnostics.push(Diagnostic::warning(
+            Some(setup.id.clone()),
+            "disabled tailstock has protected coordinates that will be ignored",
+        )),
+        (false, None, None) => {}
     }
 }
 
@@ -563,6 +648,26 @@ fn validate_interval(
     }
 }
 
+fn validate_interval_within_stock(
+    diagnostics: &mut Vec<Diagnostic>,
+    object_id: Option<String>,
+    start: f64,
+    end: f64,
+    datum_s_offset_mm: f64,
+    stock_length_mm: f64,
+    label: &str,
+) {
+    if start.is_finite()
+        && end.is_finite()
+        && (start < datum_s_offset_mm || end > datum_s_offset_mm + stock_length_mm)
+    {
+        diagnostics.push(Diagnostic::warning(
+            object_id,
+            format!("{label} extends outside stock bounds"),
+        ));
+    }
+}
+
 fn collect_unique_id(diagnostics: &mut Vec<Diagnostic>, ids: &mut HashSet<String>, id: &str) {
     if id.trim().is_empty() {
         diagnostics.push(Diagnostic::error(None, "entity id must not be empty"));
@@ -577,6 +682,14 @@ fn collect_unique_id(diagnostics: &mut Vec<Diagnostic>, ids: &mut HashSet<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn diagnostic_messages(report: &ValidationReport) -> Vec<&str> {
+        report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect()
+    }
 
     #[test]
     fn computes_ordered_stack_intervals() {
@@ -616,5 +729,120 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn validates_sample_project_without_diagnostics() {
+        let project: Project = serde_json::from_str(include_str!(
+            "../../../examples/projects/simple_spur_stack.hobgoblin.json"
+        ))
+        .expect("sample project parses");
+
+        let report = validate_project(&project);
+
+        assert_eq!(report.diagnostics, Vec::new());
+        assert_eq!(report.intervals.len(), 3);
+        assert!(!report.has_errors());
+    }
+
+    #[test]
+    fn reports_invalid_sample_project_diagnostics() {
+        let project: Project = serde_json::from_str(include_str!(
+            "../../../examples/projects/invalid/invalid_validation_cases.hobgoblin.json"
+        ))
+        .expect("invalid sample still parses");
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(report.has_errors());
+        assert!(messages.contains(&"setup machine profile id must not be empty"));
+        assert!(messages.contains(&"enabled tailstock must define protected start and end"));
+        assert!(messages.contains(&"stock material id must not be empty"));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("duplicate entity id")));
+        assert!(messages.contains(&"gear module must be positive"));
+        assert!(messages.contains(&"gear tooth count must be at least 3"));
+        assert!(
+            messages.contains(&"pressure angle must be greater than 0 and less than 45 degrees")
+        );
+        assert!(messages.contains(&"planning region polygon must contain at least three points"));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("references unknown feature")));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("exceeds stock length")));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("exceeds stock diameter")));
+    }
+
+    #[test]
+    fn warns_for_unsupported_feature_schemas() {
+        let project: Project = serde_json::from_str(
+            r#"{
+                "schema_version": 0,
+                "unit_system": "metric",
+                "project": {
+                    "id": "project.unsupported",
+                    "name": "Unsupported feature project",
+                    "datum": { "kind": "user_defined", "s_offset_mm": 0.0 }
+                },
+                "setup": {
+                    "id": "setup.unsupported",
+                    "name": "Setup",
+                    "machine_profile_id": "machine.carvera_air.default",
+                    "workholding": {
+                        "held_side": "left",
+                        "tailstock": { "enabled": false, "protected_start_s_mm": null, "protected_end_s_mm": null }
+                    },
+                    "protected_intervals": []
+                },
+                "stock": {
+                    "id": "stock.unsupported",
+                    "diameter_mm": 20.0,
+                    "length_mm": 30.0,
+                    "material_id": "material.brass.generic"
+                },
+                "stack": [
+                    {
+                        "id": "feature.helical",
+                        "name": "Helical placeholder",
+                        "length_mm": 10.0,
+                        "type": "helical_gear",
+                        "helix_angle_deg": 15.0,
+                        "hand": "right",
+                        "spur": {
+                            "module_mm": 0.5,
+                            "tooth_count": 20,
+                            "pressure_angle_deg": 20.0
+                        }
+                    },
+                    {
+                        "id": "feature.eccentric",
+                        "name": "Eccentric placeholder",
+                        "length_mm": 10.0,
+                        "type": "eccentric_section",
+                        "radius_mm": 3.0,
+                        "offset_y_mm": 1.0,
+                        "offset_z_mm": 0.0
+                    }
+                ]
+            }"#,
+        )
+        .expect("unsupported feature project parses");
+
+        let report = validate_project(&project);
+        let messages = diagnostic_messages(&report);
+
+        assert!(!report.has_errors());
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("helical gear schema is present")));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("eccentric section schema is present")));
     }
 }

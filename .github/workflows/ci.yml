@@ -33,7 +33,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'rust-toolchain.toml') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             cargo-${{ runner.os }}-
 
@@ -41,16 +41,16 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
 
       - name: Validate sample project
-        run: cargo run -p hobgoblin-cli -- validate examples/projects/simple_spur_stack.hobgoblin.json
+        run: cargo run --locked -p hobgoblin-cli -- validate examples/projects/simple_spur_stack.hobgoblin.json
 
       - name: Build sample operation graph
-        run: cargo run -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin.json
+        run: cargo run --locked -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin.json
 
   json:
     name: JSON examples
@@ -70,6 +70,7 @@ jobs:
           const fs = require("fs");
           const files = [
             "examples/projects/simple_spur_stack.hobgoblin.json",
+            "examples/projects/invalid/invalid_validation_cases.hobgoblin.json",
             "examples/library/carvera_air.machine.json",
             "examples/library/basic_tools.tools.json",
             "examples/library/brass.material.json",
@@ -79,4 +80,3 @@ jobs:
             console.log(`ok ${file}`);
           }
           NODE
-

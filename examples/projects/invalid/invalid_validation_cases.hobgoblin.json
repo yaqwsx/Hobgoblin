@@ -1,0 +1,79 @@
+{
+  "schema_version": 0,
+  "unit_system": "metric",
+  "project": {
+    "id": "project.invalid_validation_cases",
+    "name": "Invalid validation cases",
+    "datum": {
+      "kind": "user_defined",
+      "s_offset_mm": 0.0
+    }
+  },
+  "setup": {
+    "id": "setup.invalid",
+    "name": "Invalid setup",
+    "machine_profile_id": "",
+    "workholding": {
+      "held_side": "left",
+      "tailstock": {
+        "enabled": true,
+        "protected_start_s_mm": 85.0,
+        "protected_end_s_mm": null
+      }
+    },
+    "protected_intervals": [
+      {
+        "id": "protect.invalid",
+        "purpose": "tailstock",
+        "start_s_mm": 92.0,
+        "end_s_mm": 88.0
+      },
+      {
+        "id": "protect.outside_stock",
+        "purpose": "do_not_machine",
+        "start_s_mm": 0.0,
+        "end_s_mm": 120.0
+      }
+    ]
+  },
+  "stock": {
+    "id": "stock.invalid",
+    "diameter_mm": 8.0,
+    "length_mm": 90.0,
+    "material_id": ""
+  },
+  "stack": [
+    {
+      "id": "feature.duplicate",
+      "name": "Oversize section",
+      "length_mm": 20.0,
+      "type": "cylindrical_section",
+      "radius_mm": 5.0
+    },
+    {
+      "id": "feature.duplicate",
+      "name": "Bad gear",
+      "length_mm": 75.0,
+      "type": "spur_gear",
+      "module_mm": 0.0,
+      "tooth_count": 2,
+      "pressure_angle_deg": 50.0
+    }
+  ],
+  "planning_regions": [
+    {
+      "id": "region.bad_polygon",
+      "name": "Bad polygon",
+      "stage": 10,
+      "purpose": "roughing",
+      "allowed_feature_ids": [
+        "feature.missing"
+      ],
+      "polygon": [
+        { "s_mm": 0.0, "r_mm": 4.0 },
+        { "s_mm": 1.0, "r_mm": 4.0 }
+      ]
+    }
+  ]
+}
+
