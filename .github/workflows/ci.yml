@@ -65,11 +65,13 @@ jobs:
           cargo run --locked -p hobgoblin-cli -- debug-spur-path \
             examples/projects/simple_spur_stack.hobgoblin.json \
             feature.spur_20t \
-            --rack-steps-per-tooth 1 \
+            --stepping adaptive \
+            --quality draft \
             --depth-layers 0.25 \
             --machine examples/library/carvera_air.machine.json \
             --tools examples/library/basic_tools.tools.json \
-            --material examples/library/brass.material.json
+            --material examples/library/brass.material.json \
+            | jq '{debug_step_count, move_count, adaptive_steps: .adaptive_rack_stepping.generated_step_count, adaptive_max_error_mm: .adaptive_rack_stepping.estimated_max_error_mm}'
 
   json:
     name: JSON examples

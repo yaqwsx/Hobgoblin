@@ -1,5 +1,8 @@
 use hobgoblin_core::{PlanningPurpose, Project, SpurGear, StackItemKind};
-use hobgoblin_gear::{conjugate_stock_rotation_rad, derive_spur_dimensions};
+use hobgoblin_gear::{
+    conjugate_stock_rotation_rad, derive_spur_dimensions, plan_adaptive_rack_steps,
+    AdaptiveRackSteppingConfig, AdaptiveRackSteppingError, AdaptiveRackSteppingPlan,
+};
 use hobgoblin_post::{AbstractMove, AbstractPath};
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +44,7 @@ pub enum OperationKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpurShapingConfig {
     pub rack_steps_per_tooth: u32,
+    pub adaptive_rack_stepping: Option<AdaptiveRackSteppingConfig>,
     pub depth_layers: Vec<f64>,
     pub x_lead_in_mm: f64,
     pub safe_z_mm: f64,
@@ -53,6 +57,7 @@ impl Default for SpurShapingConfig {
     fn default() -> Self {
         Self {
             rack_steps_per_tooth: 5,
+            adaptive_rack_stepping: Some(AdaptiveRackSteppingConfig::default()),
             depth_layers: vec![1.0],
             x_lead_in_mm: 1.0,
             safe_z_mm: 5.0,
@@ -79,6 +84,7 @@ pub struct SpurShapingDebugStep {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpurShapingPath {
     pub path: AbstractPath,
+    pub adaptive_rack_stepping: Option<AdaptiveRackSteppingPlan>,
     pub debug_steps: Vec<SpurShapingDebugStep>,
 }
 
@@ -88,6 +94,7 @@ pub enum SpurShapingError {
     RackStepCountOverflow,
     DepthLayersMustNotBeEmpty,
     DepthLayerMustBeFiniteAndPositive { index: usize },
+    AdaptiveRackStepping(AdaptiveRackSteppingError),
 }
 
 impl std::fmt::Display for SpurShapingError {
@@ -102,11 +109,18 @@ impl std::fmt::Display for SpurShapingError {
                 formatter,
                 "depth layer {index} must be finite and greater than zero"
             ),
+            Self::AdaptiveRackStepping(error) => write!(formatter, "{error}"),
         }
     }
 }
 
 impl std::error::Error for SpurShapingError {}
+
+impl From<AdaptiveRackSteppingError> for SpurShapingError {
+    fn from(error: AdaptiveRackSteppingError) -> Self {
+        Self::AdaptiveRackStepping(error)
+    }
+}
 
 pub fn build_initial_operation_graph(project: &Project) -> OperationGraph {
     let mut nodes = Vec::new();
@@ -233,13 +247,19 @@ pub fn generate_spur_shaping_path(
 
     let operation_id = operation_id.into();
     let dimensions = derive_spur_dimensions(gear);
-    let circular_pitch = dimensions.circular_pitch_mm;
-    let rack_step_count = config.rack_steps_per_tooth;
-    let rack_step_mm = circular_pitch / rack_step_count as f64;
-    let total_rack_steps = gear
-        .tooth_count
-        .checked_mul(rack_step_count)
-        .ok_or(SpurShapingError::RackStepCountOverflow)?;
+    let adaptive_rack_stepping = config
+        .adaptive_rack_stepping
+        .map(|adaptive_config| plan_adaptive_rack_steps(gear, adaptive_config))
+        .transpose()?;
+    let fixed_total_rack_steps = if adaptive_rack_stepping.is_none() {
+        Some(
+            gear.tooth_count
+                .checked_mul(config.rack_steps_per_tooth)
+                .ok_or(SpurShapingError::RackStepCountOverflow)?,
+        )
+    } else {
+        None
+    };
     let x_start_mm = face_start_s_mm - config.x_lead_in_mm;
     let x_end_mm = face_start_s_mm + face_width_mm + config.x_lead_in_mm;
     let mut moves = Vec::new();
@@ -253,61 +273,53 @@ pub fn generate_spur_shaping_path(
     });
 
     for (depth_layer_index, depth_mm) in config.depth_layers.iter().enumerate() {
-        for global_rack_step_index in 0..=total_rack_steps {
-            let (tooth_index, rack_step_index) = if global_rack_step_index == total_rack_steps {
-                (gear.tooth_count - 1, rack_step_count)
-            } else {
-                (
-                    global_rack_step_index / rack_step_count,
-                    global_rack_step_index % rack_step_count,
-                )
-            };
-            let rack_displacement_mm = global_rack_step_index as f64 * rack_step_mm;
-            let y_mm = config.rack_axis_sign * rack_displacement_mm;
-            let a_rad = config.a_axis_sign
-                * conjugate_stock_rotation_rad(rack_displacement_mm, dimensions.pitch_radius_mm);
-            let a_deg = gear.phase_deg + a_rad.to_degrees();
-            let z_mm = -depth_mm;
-
-            moves.extend([
-                AbstractMove::Rapid {
-                    x_mm: Some(x_start_mm),
-                    y_mm: Some(y_mm),
-                    z_mm: Some(config.safe_z_mm),
-                    a_deg: Some(a_deg),
-                },
-                AbstractMove::Rapid {
-                    x_mm: Some(x_start_mm),
-                    y_mm: Some(y_mm),
-                    z_mm: Some(z_mm),
-                    a_deg: Some(a_deg),
-                },
-                AbstractMove::LinearCut {
-                    x_mm: Some(x_end_mm),
-                    y_mm: Some(y_mm),
-                    z_mm: Some(z_mm),
-                    a_deg: Some(a_deg),
-                    feed_mm_min: config.cutting_feed_mm_min,
-                },
-                AbstractMove::Rapid {
-                    x_mm: Some(x_end_mm),
-                    y_mm: Some(y_mm),
-                    z_mm: Some(config.safe_z_mm),
-                    a_deg: Some(a_deg),
-                },
-            ]);
-
-            debug_steps.push(SpurShapingDebugStep {
-                tooth_index,
-                rack_step_index,
-                depth_layer_index: depth_layer_index as u32,
-                rack_displacement_mm,
-                y_mm,
-                a_deg,
-                z_mm,
-                x_start_mm,
-                x_end_mm,
-            });
+        if let Some(adaptive_plan) = &adaptive_rack_stepping {
+            for adaptive_step in &adaptive_plan.steps {
+                append_spur_shaping_step(
+                    &mut moves,
+                    &mut debug_steps,
+                    gear,
+                    dimensions.pitch_radius_mm,
+                    config,
+                    depth_layer_index as u32,
+                    *depth_mm,
+                    adaptive_step.tooth_index,
+                    adaptive_step.rack_step_index,
+                    adaptive_step.rack_displacement_mm,
+                    x_start_mm,
+                    x_end_mm,
+                );
+            }
+        } else {
+            let total_rack_steps = fixed_total_rack_steps.expect("fixed rack step count");
+            let circular_pitch = dimensions.circular_pitch_mm;
+            let rack_step_count = config.rack_steps_per_tooth;
+            let rack_step_mm = circular_pitch / rack_step_count as f64;
+            for global_rack_step_index in 0..=total_rack_steps {
+                let (tooth_index, rack_step_index) = if global_rack_step_index == total_rack_steps {
+                    (gear.tooth_count - 1, rack_step_count)
+                } else {
+                    (
+                        global_rack_step_index / rack_step_count,
+                        global_rack_step_index % rack_step_count,
+                    )
+                };
+                let rack_displacement_mm = global_rack_step_index as f64 * rack_step_mm;
+                append_spur_shaping_step(
+                    &mut moves,
+                    &mut debug_steps,
+                    gear,
+                    dimensions.pitch_radius_mm,
+                    config,
+                    depth_layer_index as u32,
+                    *depth_mm,
+                    tooth_index,
+                    rack_step_index,
+                    rack_displacement_mm,
+                    x_start_mm,
+                    x_end_mm,
+                );
+            }
         }
     }
 
@@ -317,12 +329,75 @@ pub fn generate_spur_shaping_path(
             operation_id,
             moves,
         },
+        adaptive_rack_stepping,
         debug_steps,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn append_spur_shaping_step(
+    moves: &mut Vec<AbstractMove>,
+    debug_steps: &mut Vec<SpurShapingDebugStep>,
+    gear: &SpurGear,
+    pitch_radius_mm: f64,
+    config: &SpurShapingConfig,
+    depth_layer_index: u32,
+    depth_mm: f64,
+    tooth_index: u32,
+    rack_step_index: u32,
+    rack_displacement_mm: f64,
+    x_start_mm: f64,
+    x_end_mm: f64,
+) {
+    let y_mm = config.rack_axis_sign * rack_displacement_mm;
+    let a_rad =
+        config.a_axis_sign * conjugate_stock_rotation_rad(rack_displacement_mm, pitch_radius_mm);
+    let a_deg = gear.phase_deg + a_rad.to_degrees();
+    let z_mm = -depth_mm;
+
+    moves.extend([
+        AbstractMove::Rapid {
+            x_mm: Some(x_start_mm),
+            y_mm: Some(y_mm),
+            z_mm: Some(config.safe_z_mm),
+            a_deg: Some(a_deg),
+        },
+        AbstractMove::Rapid {
+            x_mm: Some(x_start_mm),
+            y_mm: Some(y_mm),
+            z_mm: Some(z_mm),
+            a_deg: Some(a_deg),
+        },
+        AbstractMove::LinearCut {
+            x_mm: Some(x_end_mm),
+            y_mm: Some(y_mm),
+            z_mm: Some(z_mm),
+            a_deg: Some(a_deg),
+            feed_mm_min: config.cutting_feed_mm_min,
+        },
+        AbstractMove::Rapid {
+            x_mm: Some(x_end_mm),
+            y_mm: Some(y_mm),
+            z_mm: Some(config.safe_z_mm),
+            a_deg: Some(a_deg),
+        },
+    ]);
+
+    debug_steps.push(SpurShapingDebugStep {
+        tooth_index,
+        rack_step_index,
+        depth_layer_index,
+        rack_displacement_mm,
+        y_mm,
+        a_deg,
+        z_mm,
+        x_start_mm,
+        x_end_mm,
+    });
+}
+
 fn validate_spur_shaping_config(config: &SpurShapingConfig) -> Result<(), SpurShapingError> {
-    if config.rack_steps_per_tooth == 0 {
+    if config.adaptive_rack_stepping.is_none() && config.rack_steps_per_tooth == 0 {
         return Err(SpurShapingError::RackStepsPerToothMustBePositive);
     }
     if config.depth_layers.is_empty() {
@@ -360,6 +435,7 @@ mod tests {
     fn generates_deterministic_spur_shaping_debug_steps() {
         let config = SpurShapingConfig {
             rack_steps_per_tooth: 2,
+            adaptive_rack_stepping: None,
             depth_layers: vec![0.25, 0.5],
             x_lead_in_mm: 1.0,
             safe_z_mm: 3.0,
@@ -403,6 +479,7 @@ mod tests {
         gear.phase_deg = 10.0;
         let config = SpurShapingConfig {
             rack_steps_per_tooth: 1,
+            adaptive_rack_stepping: None,
             depth_layers: vec![0.25],
             a_axis_sign: -1.0,
             rack_axis_sign: -1.0,
@@ -424,9 +501,48 @@ mod tests {
     }
 
     #[test]
+    fn uses_adaptive_rack_stepping_when_configured() {
+        let config = SpurShapingConfig {
+            rack_steps_per_tooth: 0,
+            depth_layers: vec![0.25],
+            adaptive_rack_stepping: Some(AdaptiveRackSteppingConfig {
+                tolerance_mm: 0.02,
+                min_step_mm: 0.05,
+                max_step_mm: 0.4,
+                ..AdaptiveRackSteppingConfig::default()
+            }),
+            ..SpurShapingConfig::default()
+        };
+
+        let result = generate_spur_shaping_path(
+            "op.feature.test.left_flank",
+            "feature.test",
+            &sample_gear(),
+            0.0,
+            2.0,
+            &config,
+        )
+        .expect("valid adaptive shaping config");
+        let plan = result
+            .adaptive_rack_stepping
+            .as_ref()
+            .expect("adaptive stepping report");
+
+        assert_eq!(result.debug_steps.len(), plan.generated_step_count);
+        assert_eq!(result.path.moves.len(), 1 + plan.generated_step_count * 4);
+        assert_eq!(result.debug_steps[0].rack_displacement_mm, 0.0);
+        assert_eq!(
+            result.debug_steps.last().unwrap().rack_displacement_mm,
+            plan.steps.last().unwrap().rack_displacement_mm
+        );
+        assert!(plan.estimated_max_error_mm <= plan.tolerance_mm);
+    }
+
+    #[test]
     fn rejects_invalid_spur_shaping_config() {
         let invalid_steps = SpurShapingConfig {
             rack_steps_per_tooth: 0,
+            adaptive_rack_stepping: None,
             ..SpurShapingConfig::default()
         };
         assert_eq!(
@@ -444,6 +560,7 @@ mod tests {
 
         let overflow_steps = SpurShapingConfig {
             rack_steps_per_tooth: u32::MAX,
+            adaptive_rack_stepping: None,
             ..SpurShapingConfig::default()
         };
         assert_eq!(
@@ -460,6 +577,7 @@ mod tests {
         );
 
         let invalid_depth = SpurShapingConfig {
+            adaptive_rack_stepping: None,
             depth_layers: vec![0.25, -0.5],
             ..SpurShapingConfig::default()
         };

@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use hobgoblin_core::{
     validate_project, validate_project_with_libraries, LibrarySet, MachineProfile, Material,
     Project, Severity, SpurGear, StackItemKind, ToolLibrary,
 };
-use hobgoblin_gear::derive_spur_dimensions;
+use hobgoblin_gear::{derive_spur_dimensions, AdaptiveRackSteppingConfig, RackSteppingQuality};
 use hobgoblin_planner::{
     build_initial_operation_graph, generate_spur_shaping_path, SpurShapingConfig,
 };
@@ -35,8 +35,18 @@ enum Command {
     DebugSpurPath {
         project: PathBuf,
         feature_id: String,
-        #[arg(long, default_value_t = 5)]
+        #[arg(long, default_value_t = 5, help = "Fixed-mode rack samples per tooth")]
         rack_steps_per_tooth: u32,
+        #[arg(long, value_enum, default_value_t = RackSteppingMode::Adaptive)]
+        stepping: RackSteppingMode,
+        #[arg(long, value_enum, default_value_t = CliRackSteppingQuality::Standard)]
+        quality: CliRackSteppingQuality,
+        #[arg(long)]
+        tolerance_mm: Option<f64>,
+        #[arg(long)]
+        min_step_mm: Option<f64>,
+        #[arg(long)]
+        max_step_mm: Option<f64>,
         #[arg(long, value_delimiter = ',', default_value = "0.25,0.5,0.75,1.0")]
         depth_layers: Vec<f64>,
         #[command(flatten)]
@@ -54,6 +64,29 @@ struct LibraryArgs {
     materials: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum RackSteppingMode {
+    Adaptive,
+    Fixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliRackSteppingQuality {
+    Draft,
+    Standard,
+    Fine,
+}
+
+impl From<CliRackSteppingQuality> for RackSteppingQuality {
+    fn from(value: CliRackSteppingQuality) -> Self {
+        match value {
+            CliRackSteppingQuality::Draft => Self::Draft,
+            CliRackSteppingQuality::Standard => Self::Standard,
+            CliRackSteppingQuality::Fine => Self::Fine,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -63,13 +96,25 @@ fn main() -> Result<()> {
             project,
             feature_id,
             rack_steps_per_tooth,
+            stepping,
+            quality,
+            tolerance_mm,
+            min_step_mm,
+            max_step_mm,
             depth_layers,
             libraries,
         } => debug_spur_path(
             project,
             feature_id,
-            rack_steps_per_tooth,
-            depth_layers,
+            DebugSpurPathOptions {
+                rack_steps_per_tooth,
+                stepping,
+                quality,
+                tolerance_mm,
+                min_step_mm,
+                max_step_mm,
+                depth_layers,
+            },
             libraries,
         ),
     }
@@ -183,8 +228,7 @@ fn plan(path: PathBuf, libraries: LibraryArgs) -> Result<()> {
 fn debug_spur_path(
     path: PathBuf,
     feature_id: String,
-    rack_steps_per_tooth: u32,
-    depth_layers: Vec<f64>,
+    options: DebugSpurPathOptions,
     libraries: LibraryArgs,
 ) -> Result<()> {
     let project = read_project(path)?;
@@ -238,9 +282,19 @@ fn debug_spur_path(
             _ => anyhow::bail!("feature '{feature_id}' is not a spur gear"),
         };
 
+        let adaptive_rack_stepping = match options.stepping {
+            RackSteppingMode::Adaptive => Some(build_adaptive_rack_stepping_config(
+                options.quality,
+                options.tolerance_mm,
+                options.min_step_mm,
+                options.max_step_mm,
+            )),
+            RackSteppingMode::Fixed => None,
+        };
         let config = SpurShapingConfig {
-            rack_steps_per_tooth,
-            depth_layers,
+            rack_steps_per_tooth: options.rack_steps_per_tooth,
+            adaptive_rack_stepping,
+            depth_layers: options.depth_layers,
             a_axis_sign: machine_profile
                 .map(|profile| profile.axis_mapping.rotary_sign)
                 .unwrap_or_else(|| SpurShapingConfig::default().a_axis_sign),
@@ -269,6 +323,7 @@ fn debug_spur_path(
             debug_step_count: result.debug_steps.len(),
             move_count: result.path.moves.len(),
             config: &config,
+            adaptive_rack_stepping: result.adaptive_rack_stepping.as_ref(),
             path: &result.path,
             debug_steps: &result.debug_steps,
         };
@@ -278,6 +333,36 @@ fn debug_spur_path(
     }
 
     anyhow::bail!("feature '{feature_id}' not found")
+}
+
+#[derive(Debug)]
+struct DebugSpurPathOptions {
+    rack_steps_per_tooth: u32,
+    stepping: RackSteppingMode,
+    quality: CliRackSteppingQuality,
+    tolerance_mm: Option<f64>,
+    min_step_mm: Option<f64>,
+    max_step_mm: Option<f64>,
+    depth_layers: Vec<f64>,
+}
+
+fn build_adaptive_rack_stepping_config(
+    quality: CliRackSteppingQuality,
+    tolerance_mm: Option<f64>,
+    min_step_mm: Option<f64>,
+    max_step_mm: Option<f64>,
+) -> AdaptiveRackSteppingConfig {
+    let mut config = AdaptiveRackSteppingConfig::for_quality(quality.into());
+    if let Some(tolerance_mm) = tolerance_mm {
+        config.tolerance_mm = tolerance_mm;
+    }
+    if let Some(min_step_mm) = min_step_mm {
+        config.min_step_mm = min_step_mm;
+    }
+    if let Some(max_step_mm) = max_step_mm {
+        config.max_step_mm = max_step_mm;
+    }
+    config
 }
 
 #[derive(Debug, Serialize)]
@@ -292,6 +377,7 @@ struct DebugSpurPathOutput<'a> {
     debug_step_count: usize,
     move_count: usize,
     config: &'a SpurShapingConfig,
+    adaptive_rack_stepping: Option<&'a hobgoblin_gear::AdaptiveRackSteppingPlan>,
     path: &'a hobgoblin_post::AbstractPath,
     debug_steps: &'a [hobgoblin_planner::SpurShapingDebugStep],
 }

@@ -28,7 +28,8 @@ cargo run -p hobgoblin-cli -- plan examples/projects/simple_spur_stack.hobgoblin
 cargo run -p hobgoblin-cli -- debug-spur-path \
   examples/projects/simple_spur_stack.hobgoblin.json \
   feature.spur_20t \
-  --rack-steps-per-tooth 1 \
+  --stepping adaptive \
+  --quality draft \
   --depth-layers 0.25 \
   --machine examples/library/carvera_air.machine.json \
   --tools examples/library/basic_tools.tools.json \
