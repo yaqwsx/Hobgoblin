@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:tauri": "node scripts/tauri-dev-server.mjs",
+    "dev:tauri-server": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:ui": "node scripts/ui-smoke.mjs",

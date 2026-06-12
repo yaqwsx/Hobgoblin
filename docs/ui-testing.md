@@ -6,6 +6,9 @@ Run the M6 browser smoke test against a local UI server:
 npm run dev
 ```
 
+The browser dev server prefers `http://127.0.0.1:1420`, but it will move to
+the next available port if 1420 is already in use. Use the URL printed by Vite.
+
 Then, in another shell:
 
 ```sh
@@ -20,5 +23,15 @@ HOBGOBLIN_UI_URL=http://127.0.0.1:4173/?sample=1 npm run test:ui
 ```
 
 Use `HOBGOBLIN_UI_SCREENSHOT=/path/to/file.png` to choose a different screenshot output path.
+
+For native Tauri development, run:
+
+```sh
+npm run tauri dev
+```
+
+The Tauri wrapper uses the fixed Tauri dev URL `http://127.0.0.1:1420`. If a
+Hobgoblin Vite server is already running there, it reuses it. If another process
+owns that port, it prints an `lsof` command for finding the owner.
 
 The workflow covered by `scripts/ui-smoke.mjs` loads the simple spur stack sample, checks the grouped command ribbon accessibility, creates cylinder, spur, protected interval, and planning-region edits, verifies tree and viewport selection drive the inspector, edits stock and gear values, exercises non-finite numeric input without crashing, reorders a stack item, exercises region vertex add/delete, and verifies measure mode.

@@ -5,8 +5,8 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: {
-    port: 1420,
-    strictPort: true,
+    port: Number(process.env.HOBGOBLIN_DEV_PORT ?? 1420),
+    strictPort: process.env.HOBGOBLIN_STRICT_PORT === "1",
   },
   envPrefix: ["VITE_", "TAURI_"],
 });
