@@ -33,6 +33,28 @@ async function expectSelectedProfileLabel(text) {
   await page.locator("g", { has: page.locator(".profile.selected") }).getByText(text).waitFor();
 }
 
+async function expectAdjacentInspectorLayout({ minEditorWidth }) {
+  const featureTreeBox = await page.locator(".feature-tree").boundingBox();
+  const inspectorBox = await page.locator(".inspector").boundingBox();
+  const editorBox = await page.locator(".editor-plane").boundingBox();
+  assert(featureTreeBox !== null, "expected feature tree panel to be measurable");
+  assert(inspectorBox !== null, "expected inspector panel to be measurable");
+  assert(editorBox !== null, "expected editor preview panel to be measurable");
+  assert(
+    Math.abs(inspectorBox.x - (featureTreeBox.x + featureTreeBox.width)) <= 4,
+    `expected inspector adjacent to feature tree, tree right=${(featureTreeBox.x + featureTreeBox.width).toFixed(2)} inspector left=${inspectorBox.x.toFixed(2)}`,
+  );
+  assert(
+    editorBox.x > inspectorBox.x + inspectorBox.width,
+    `expected preview to sit after the inspector, editor left=${editorBox.x.toFixed(2)} inspector right=${(inspectorBox.x + inspectorBox.width).toFixed(2)}`,
+  );
+  assert(
+    editorBox.width >= minEditorWidth,
+    `expected preview to remain usable at ${page.viewportSize()?.width}px viewport, got width=${editorBox.width.toFixed(2)} px`,
+  );
+  return { featureTreeBox, inspectorBox, editorBox };
+}
+
 try {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.getByText("Simple spur stack").waitFor();
@@ -53,12 +75,19 @@ try {
     "expected compact command ribbon to avoid document-level horizontal overflow",
   );
   await page.locator(".feature-tree").getByText("20T spur gear").waitFor();
-  const featureTreeBox = await page.locator(".feature-tree").boundingBox();
+  const { featureTreeBox } = await expectAdjacentInspectorLayout({ minEditorWidth: 740 });
+  for (const [width, minEditorWidth] of [
+    [1280, 680],
+    [1024, 420],
+  ]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expectAdjacentInspectorLayout({ minEditorWidth });
+  }
+  await page.setViewportSize({ width: 1440, height: 960 });
   const visibleStackAction = page
     .locator(".feature-tree .tree-item-with-actions", { hasText: "20T spur gear" })
     .locator(".tree-row-actions");
   const visibleStackActionBox = await visibleStackAction.boundingBox();
-  assert(featureTreeBox !== null, "expected feature tree panel to be measurable");
   assert(visibleStackActionBox !== null, "expected stack row action column to be measurable");
   const featureTreeRight = featureTreeBox.x + featureTreeBox.width;
   const visibleStackActionRight = visibleStackActionBox.x + visibleStackActionBox.width;

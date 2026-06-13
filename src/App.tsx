@@ -969,63 +969,6 @@ export function App() {
           )}
         </aside>
 
-        <section className="editor-plane" aria-label="Shaft schematic">
-          <PanelHeader
-            title="Shaft"
-            subtitle={
-              loaded
-                ? `${loaded.project.stock.diameter_mm.toFixed(2)} mm stock x ${loaded.project.stock.length_mm.toFixed(2)} mm`
-                : "Waiting for project"
-            }
-          />
-          {loaded ? (
-            <PlanningEditor
-              project={loaded.project}
-              selectedObjectId={selectedObjectId}
-              editorMode={editorMode}
-              measurementAnchors={measurementAnchors}
-              onSelect={selectProjectObject}
-              onMeasureAnchor={handleAnchor}
-              onResetMeasurement={resetMeasurement}
-              onMoveRegionVertex={(regionId, vertexIndex, point) =>
-                updatePlanningRegion(regionId, (region) => ({
-                  ...region,
-                  polygon: region.polygon.map((candidate, index) =>
-                    index === vertexIndex ? point : candidate,
-                  ),
-                }))
-              }
-              onAddRegionVertex={(regionId, edgeIndex, point) =>
-                updatePlanningRegion(regionId, (region) => {
-                  const polygon = [...region.polygon];
-                  polygon.splice(edgeIndex + 1, 0, point);
-                  return { ...region, polygon };
-                })
-              }
-              onDeleteRegionVertex={(regionId, vertexIndex) =>
-                updatePlanningRegion(regionId, (region) => {
-                  if (region.polygon.length <= 3) {
-                    setStatus("Planning polygons need at least three vertices");
-                    return region;
-                  }
-                  return {
-                    ...region,
-                    polygon: region.polygon.filter((_, index) => index !== vertexIndex),
-                  };
-                })
-              }
-              onResizeAxisAlignedRegion={(regionId, bounds) =>
-                updatePlanningRegion(regionId, (region) => ({
-                  ...region,
-                  polygon: rectanglePolygon(bounds),
-                }))
-              }
-            />
-          ) : (
-            <EmptyPanel message="The shaft preview appears here after loading a project." />
-          )}
-        </section>
-
         <aside className="inspector" aria-label="Inspector">
           <PanelHeader title={inspectorMode === "library" ? "Libraries" : "Inspector"} subtitle={inspectorMode === "library" ? libraryTab : selectedObjectId ?? "Nothing selected"} />
           {inspectorMode === "library" ? (
@@ -1118,6 +1061,63 @@ export function App() {
             <EmptyPanel message="Select a feature or diagnostic to inspect its data." />
           )}
         </aside>
+
+        <section className="editor-plane" aria-label="Shaft schematic">
+          <PanelHeader
+            title="Shaft"
+            subtitle={
+              loaded
+                ? `${loaded.project.stock.diameter_mm.toFixed(2)} mm stock x ${loaded.project.stock.length_mm.toFixed(2)} mm`
+                : "Waiting for project"
+            }
+          />
+          {loaded ? (
+            <PlanningEditor
+              project={loaded.project}
+              selectedObjectId={selectedObjectId}
+              editorMode={editorMode}
+              measurementAnchors={measurementAnchors}
+              onSelect={selectProjectObject}
+              onMeasureAnchor={handleAnchor}
+              onResetMeasurement={resetMeasurement}
+              onMoveRegionVertex={(regionId, vertexIndex, point) =>
+                updatePlanningRegion(regionId, (region) => ({
+                  ...region,
+                  polygon: region.polygon.map((candidate, index) =>
+                    index === vertexIndex ? point : candidate,
+                  ),
+                }))
+              }
+              onAddRegionVertex={(regionId, edgeIndex, point) =>
+                updatePlanningRegion(regionId, (region) => {
+                  const polygon = [...region.polygon];
+                  polygon.splice(edgeIndex + 1, 0, point);
+                  return { ...region, polygon };
+                })
+              }
+              onDeleteRegionVertex={(regionId, vertexIndex) =>
+                updatePlanningRegion(regionId, (region) => {
+                  if (region.polygon.length <= 3) {
+                    setStatus("Planning polygons need at least three vertices");
+                    return region;
+                  }
+                  return {
+                    ...region,
+                    polygon: region.polygon.filter((_, index) => index !== vertexIndex),
+                  };
+                })
+              }
+              onResizeAxisAlignedRegion={(regionId, bounds) =>
+                updatePlanningRegion(regionId, (region) => ({
+                  ...region,
+                  polygon: rectanglePolygon(bounds),
+                }))
+              }
+            />
+          ) : (
+            <EmptyPanel message="The shaft preview appears here after loading a project." />
+          )}
+        </section>
       </section>
 
       <section className="diagnostics-panel" aria-label="Diagnostics">

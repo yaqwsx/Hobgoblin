@@ -208,7 +208,7 @@ button {
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(360px, 1fr) minmax(260px, 340px);
+  grid-template-columns: minmax(220px, 260px) minmax(260px, 320px) minmax(420px, 1fr);
   gap: 1px;
   background: #d8ded8;
 }
@@ -240,6 +240,15 @@ button {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   background: #f7faf4;
+}
+
+.feature-tree {
+  border-right: 1px solid #c7d2ca;
+}
+
+.inspector {
+  border-right: 1px solid #bfcac1;
+  box-shadow: 8px 0 18px rgba(28, 42, 36, 0.08);
 }
 
 .panel-header {
