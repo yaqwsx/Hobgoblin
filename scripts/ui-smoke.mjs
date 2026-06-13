@@ -30,7 +30,7 @@ async function expectSelectedTreeItem(text) {
 }
 
 async function expectSelectedProfileLabel(text) {
-  await page.locator("g", { has: page.locator(".profile.selected") }).getByText(text).waitFor();
+  await page.locator(".feature-overlay", { has: page.locator(".profile.selected") }).getByText(text).waitFor();
 }
 
 async function expectAdjacentInspectorLayout({ minEditorWidth }) {
@@ -177,29 +177,60 @@ try {
   await page.locator(".viewport-controls").getByLabel("Pan down").waitFor();
   await page.locator(".datum-marker").getByText("datum").waitFor();
   await page.locator(".axis-label").getByText("d / mm", { exact: true }).waitFor();
+  await page.locator("canvas.planning-webgl-canvas[data-renderer='webgl']").waitFor();
+  const webglStats = await page.locator("canvas.planning-webgl-canvas").evaluate((canvas) => {
+    const context = canvas.getContext("2d");
+    if (context) {
+      const sample = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      return { hasPixels: sample.some((value, index) => index % 4 !== 3 && value < 250), distinctColors: 0, shaftPixels: 0, stockPixels: 0 };
+    }
+    const gl = canvas.getContext("webgl");
+    if (!gl) {
+      return { hasPixels: false, distinctColors: 0, shaftPixels: 0, stockPixels: 0 };
+    }
+    const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+    gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let hasPixels = false;
+    let shaftPixels = 0;
+    let stockPixels = 0;
+    const colors = new Set();
+    for (let index = 0; index < pixels.length; index += 16) {
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      if (r < 250 || g < 250 || b < 250) {
+        hasPixels = true;
+      }
+      if (g > r * 1.04 && g >= b && r > 70 && b > 60) {
+        shaftPixels += 1;
+      }
+      if (r > g * 1.1 && g > b * 1.15 && r > 120) {
+        stockPixels += 1;
+      }
+      colors.add(`${Math.round(r / 16)},${Math.round(g / 16)},${Math.round(b / 16)}`);
+    }
+    return { hasPixels, distinctColors: colors.size, shaftPixels, stockPixels };
+  });
+  assert(webglStats.hasPixels, "expected WebGL preview canvas to render nonblank geometry");
+  assert(
+    webglStats.distinctColors >= 18,
+    `expected WebGL preview to render shaded/material-varied geometry, got ${webglStats.distinctColors} color buckets`,
+  );
+  assert(
+    webglStats.shaftPixels > 1000,
+    `expected WebGL preview to include shaft/gear-colored pixels, got ${webglStats.shaftPixels}`,
+  );
+  assert(
+    webglStats.stockPixels > 1000,
+    `expected WebGL preview to include stock/protected warm material pixels, got ${webglStats.stockPixels}`,
+  );
   assert((await page.locator(".shaft-axis").count()) === 1, "expected preview to render a central shaft axis");
   assert((await page.locator(".gear-teeth").count()) >= 2, "expected gears to render visible teeth on both sides of the shaft");
   const stockBoxBeforeNavigation = await page.locator(".stock-rect").boundingBox();
-  const shaftAxisY = await page.locator(".shaft-axis").evaluate((axis) => {
-    const svg = axis.ownerSVGElement;
-    if (!svg) {
-      return null;
-    }
-    const point = svg.createSVGPoint();
-    point.x = Number(axis.getAttribute("x1"));
-    point.y = Number(axis.getAttribute("y1"));
-    const matrix = svg.getScreenCTM();
-    return matrix ? point.matrixTransform(matrix).y : null;
-  });
-  const shaftAxisPaintCheck = await page.locator(".shaft-axis").evaluate((axis) => {
-    const materialLayers = [...document.querySelectorAll(".stock-rect, .profile, .gear-teeth, .protected")];
-    return materialLayers.every((layer) =>
-      Boolean(layer.compareDocumentPosition(axis) & Node.DOCUMENT_POSITION_FOLLOWING),
-    );
-  });
+  const shaftAxisBox = await page.locator(".shaft-axis").boundingBox();
+  const shaftAxisY = shaftAxisBox ? shaftAxisBox.y + shaftAxisBox.height / 2 : null;
   assert(stockBoxBeforeNavigation !== null, "expected stock material to be measurable");
   assert(shaftAxisY !== null, "expected shaft axis to be measurable");
-  assert(shaftAxisPaintCheck, "expected central shaft axis to be painted above solid material");
   assert(
     stockBoxBeforeNavigation.y < shaftAxisY && stockBoxBeforeNavigation.y + stockBoxBeforeNavigation.height > shaftAxisY,
     "expected stock material to span both sides of the shaft axis",
@@ -223,7 +254,7 @@ try {
   const viewportBackground = page.locator(".viewport-background");
   const viewportBox = await viewportBackground.boundingBox();
   assert(viewportBox !== null, "expected viewport background to be measurable");
-  const zoomAnchorLabel = page.locator("svg text").filter({ hasText: "20T spur gear" }).first();
+  const zoomAnchorLabel = page.locator(".feature-label").filter({ hasText: "20T spur gear" }).first();
   const zoomAnchorBefore = await zoomAnchorLabel.boundingBox();
   assert(zoomAnchorBefore !== null, "expected gear label to be measurable before cursor zoom");
   const zoomCursorX = zoomAnchorBefore.x + zoomAnchorBefore.width / 2;
@@ -415,7 +446,7 @@ try {
   await expectInspectorSubtitle("feature.right_journal");
   await expectSelectedTreeItem("Right journal");
   await expectSelectedProfileLabel("Right journal");
-  await page.locator("g", { hasText: "Left journal" }).locator(".profile").click();
+  await page.locator(".feature-overlay", { hasText: "Left journal" }).locator(".profile").click();
   await expectInspectorSubtitle("feature.left_journal");
   await expectSelectedTreeItem("Left journal");
   await expectSelectedProfileLabel("Left journal");

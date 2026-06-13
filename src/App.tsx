@@ -27,7 +27,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
   distance,
   formatMm,
@@ -1391,7 +1391,8 @@ function PlanningEditor({
   onDeleteRegionVertex: (regionId: string, vertexIndex: number) => void;
   onResizeAxisAlignedRegion: (regionId: string, bounds: RegionBounds) => void;
 }) {
-  const svgRef = useRef<SVGSVGElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const [viewZoom, setViewZoom] = useState(1);
   const [viewCenterOffsetS, setViewCenterOffsetS] = useState(0);
   const [viewCenterOffsetR, setViewCenterOffsetR] = useState(0);
@@ -1530,20 +1531,20 @@ function PlanningEditor({
     setViewCenterOffsetR(0);
   };
 
-  function svgCoordinates(clientX: number, clientY: number) {
-    const svg = svgRef.current;
-    if (!svg) {
+  function viewportCoordinates(clientX: number, clientY: number) {
+    const viewport = viewportRef.current;
+    if (!viewport) {
       return { x: padding.left, y: yForR(0) };
     }
-    const rect = svg.getBoundingClientRect();
+    const rect = viewport.getBoundingClientRect();
     return {
       x: ((clientX - rect.left) / rect.width) * viewWidth,
       y: ((clientY - rect.top) / rect.height) * viewHeight,
     };
   }
 
-  function eventPoint(event: React.PointerEvent<SVGElement>): PointSr {
-    const { x, y } = svgCoordinates(event.clientX, event.clientY);
+  function eventPoint(event: React.PointerEvent<HTMLElement>): PointSr {
+    const { x, y } = viewportCoordinates(event.clientX, event.clientY);
     return clampPoint({ s_mm: sForX(x), r_mm: rForY(y) });
   }
 
@@ -1552,7 +1553,7 @@ function PlanningEditor({
     if (clampedZoom === viewZoom) {
       return;
     }
-    const { x, y } = svgCoordinates(clientX, clientY);
+    const { x, y } = viewportCoordinates(clientX, clientY);
     const cursorRatio = Math.min(1, Math.max(0, (x - padding.left) / plotWidth));
     const cursorRatioY = Math.min(1, Math.max(0, (y - padding.top) / plotHeight));
     const cursorS = sForX(x);
@@ -1587,6 +1588,49 @@ function PlanningEditor({
         }
       : null;
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    renderPlanningWebgl(canvas, {
+      viewWidth,
+      viewHeight,
+      padding,
+      plotWidth,
+      plotHeight,
+      minS,
+      maxS,
+      minR,
+      maxR,
+      stockStartS,
+      stockEndS,
+      stockRadius: project.stock.diameter_mm / 2,
+      selectedObjectId,
+      protectedIntervals,
+      spans,
+      planningRegions,
+      xForS,
+      yForR,
+      rectForRadius,
+      isGearFeature,
+      moduleForItem,
+    });
+  }, [
+    viewZoom,
+    viewCenterOffsetS,
+    viewCenterOffsetR,
+    project,
+    selectedObjectId,
+    spans,
+    protectedIntervals,
+    planningRegions,
+    minS,
+    maxS,
+    minR,
+    maxR,
+  ]);
+
   return (
     <div className="planning-editor">
       <div className="editor-toolbar">
@@ -1620,12 +1664,11 @@ function PlanningEditor({
           </button>
         </div>
       </div>
-      <svg
-        ref={svgRef}
-        className="planning-svg"
-        viewBox={`0 0 ${viewWidth} ${viewHeight}`}
+      <div
+        ref={viewportRef}
+        className="planning-webgl-viewport"
         role="img"
-        aria-label="2D shaft and planning editor"
+        aria-label="WebGL 2D shaft and planning editor"
         onWheel={(event) => {
           event.preventDefault();
           zoomToClientPoint(event.clientX, event.clientY, viewZoom * (event.deltaY > 0 ? 1 / 1.2 : 1.2));
@@ -1647,12 +1690,12 @@ function PlanningEditor({
           if (!panStart || panStart.pointerId !== event.pointerId || event.buttons !== 1) {
             return;
           }
-          const svgBounds = event.currentTarget.getBoundingClientRect();
+          const viewportBounds = event.currentTarget.getBoundingClientRect();
           applyPan(
             event.clientX,
             event.clientY,
-            svgBounds.width * (plotWidth / viewWidth),
-            svgBounds.height * (plotHeight / viewHeight),
+            viewportBounds.width * (plotWidth / viewWidth),
+            viewportBounds.height * (plotHeight / viewHeight),
           );
         }}
         onPointerUp={(event) => {
@@ -1662,40 +1705,17 @@ function PlanningEditor({
         }}
         onPointerCancel={() => setPanStart(null)}
       >
-        <defs>
-          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5ebe4" strokeWidth="1" />
-          </pattern>
-          <linearGradient id="stockGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#f5ead7" />
-            <stop offset="42%" stopColor="#ead8b8" />
-            <stop offset="50%" stopColor="#d2b47e" />
-            <stop offset="58%" stopColor="#ead8b8" />
-            <stop offset="100%" stopColor="#f9f1e4" />
-          </linearGradient>
-          <linearGradient id="shaftGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#dfe8e5" />
-            <stop offset="38%" stopColor="#bed0cd" />
-            <stop offset="50%" stopColor="#90aaa7" />
-            <stop offset="62%" stopColor="#bed0cd" />
-            <stop offset="100%" stopColor="#eef4f2" />
-          </linearGradient>
-          <linearGradient id="gearGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#dbe7e3" />
-            <stop offset="36%" stopColor="#a9c5bd" />
-            <stop offset="50%" stopColor="#7fa89d" />
-            <stop offset="64%" stopColor="#a9c5bd" />
-            <stop offset="100%" stopColor="#ecf4f1" />
-          </linearGradient>
-        </defs>
-        <rect
-          x={padding.left}
-          y={padding.top}
-          width={plotWidth}
-          height={plotHeight}
+        <canvas
+          ref={canvasRef}
+          className="planning-webgl-canvas"
+          width={viewWidth}
+          height={viewHeight}
+          data-renderer="webgl"
+          aria-hidden="true"
+        />
+        <div
           className={panStart ? "viewport-background panning" : "viewport-background"}
-          fill="url(#grid)"
-          stroke="#d2dbd4"
+          style={viewportStyle(padding.left, padding.top, plotWidth, plotHeight, viewWidth, viewHeight)}
           onPointerDown={(event) => {
             if (event.button !== 0) {
               return;
@@ -1723,25 +1743,35 @@ function PlanningEditor({
           }}
           onPointerCancel={() => setPanStart(null)}
         />
-        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + plotHeight} className="axis-line" />
-        <text x={padding.left} y={viewHeight - 12} className="axis-label">s / mm</text>
-        <text x={12} y={padding.top + 14} className="axis-label">d / mm</text>
+        <div
+          className="axis-label axis-label-s"
+          style={pointOverlayStyle(padding.left, viewHeight - 18, viewWidth, viewHeight)}
+        >
+          s / mm
+        </div>
+        <div
+          className="axis-label axis-label-d"
+          style={pointOverlayStyle(12, padding.top + 8, viewWidth, viewHeight)}
+        >
+          d / mm
+        </div>
         {stockStartS >= minS && stockStartS <= maxS ? (
-          <g className="datum-marker">
-            <line x1={xForS(stockStartS)} y1={padding.top} x2={xForS(stockStartS)} y2={padding.top + plotHeight} />
-            <text x={xForS(stockStartS) + 5} y={padding.top + plotHeight - 8}>datum</text>
-          </g>
+          <div
+            className="datum-marker"
+            style={viewportStyle(xForS(stockStartS), padding.top, 1, plotHeight, viewWidth, viewHeight)}
+          >
+            <span>datum</span>
+          </div>
         ) : null}
 
         {(() => {
           const stockRadius = project.stock.diameter_mm / 2;
           const stockRect = rectForRadius(stockRadius);
           return (
-            <rect
-              x={xForS(stockStartS)}
-              y={stockRect.y}
-              width={xForS(stockEndS) - xForS(stockStartS)}
-              height={stockRect.height}
+            <button
+              type="button"
+              aria-label="Select stock"
+              style={viewportStyle(xForS(stockStartS), stockRect.y, xForS(stockEndS) - xForS(stockStartS), stockRect.height, viewWidth, viewHeight)}
               className={selectedObjectId === project.stock.id ? "stock-rect selected" : "stock-rect"}
               onClick={() => onSelect(project.stock.id)}
             />
@@ -1755,18 +1785,18 @@ function PlanningEditor({
             return null;
           }
           return (
-            <g key={interval.id} onClick={() => onSelect(interval.id)}>
-              <rect
-                x={xForS(visibleStartS)}
-                y={padding.top}
-                width={xForS(visibleEndS) - xForS(visibleStartS)}
-                height={plotHeight}
-                className={selectedObjectId === interval.id ? "protected selected" : "protected"}
-              />
-              <text x={xForS(visibleStartS) + 4} y={padding.top + 16} className="protected-label">
+            <button
+              key={interval.id}
+              type="button"
+              aria-label={`Select protected interval ${interval.id}`}
+              style={viewportStyle(xForS(visibleStartS), padding.top, xForS(visibleEndS) - xForS(visibleStartS), plotHeight, viewWidth, viewHeight)}
+              className={selectedObjectId === interval.id ? "protected selected" : "protected"}
+              onClick={() => onSelect(interval.id)}
+            >
+              <span className="protected-label">
                 {interval.purpose}
-              </text>
-            </g>
+              </span>
+            </button>
           );
         })}
 
@@ -1783,12 +1813,21 @@ function PlanningEditor({
           const hitWidth = Math.max(featureWidth, 10);
           const hitX = xStart - Math.max(0, hitWidth - featureWidth) / 2;
           return (
-            <g key={span.item.id}>
-              <rect
-                x={xStart}
-                y={featureRect.y}
-                width={featureWidth}
-                height={featureRect.height}
+            <div
+              key={span.item.id}
+              className="feature-overlay"
+              style={viewportStyle(hitX, padding.top, hitWidth, plotHeight, viewWidth, viewHeight)}
+            >
+              <button
+                type="button"
+                aria-label={`Select ${span.item.name} hit area`}
+                className="profile-hit"
+                onClick={() => onSelect(span.item.id)}
+              />
+              <button
+                type="button"
+                aria-label={`Select ${span.item.name}`}
+                style={viewportStyle(xStart - hitX, featureRect.y - padding.top, featureWidth, featureRect.height, hitWidth, plotHeight)}
                 className={[
                   selectedObjectId === span.item.id ? "profile selected" : "profile",
                   gearFeature ? "gear-profile" : "solid-profile",
@@ -1797,60 +1836,58 @@ function PlanningEditor({
               />
               {gearFeature ? (
                 <>
-                  <polygon
-                    points={gearToothPath(xStart, xEnd, radius, rootRadius, 1)}
+                  <span
                     className={selectedObjectId === span.item.id ? "gear-teeth selected" : "gear-teeth"}
-                    onClick={() => onSelect(span.item.id)}
+                    aria-hidden="true"
                   />
-                  <polygon
-                    points={gearToothPath(xStart, xEnd, radius, rootRadius, -1)}
+                  <span
                     className={selectedObjectId === span.item.id ? "gear-teeth selected" : "gear-teeth"}
-                    onClick={() => onSelect(span.item.id)}
+                    aria-hidden="true"
                   />
-                  <text x={xStart + 5} y={yForR(-rootRadius) - 6} className="tooth-count-label">
+                  <span
+                    className="tooth-count-label"
+                    style={pointOverlayStyle(xStart + 5 - hitX, yForR(-rootRadius) - 18 - padding.top, hitWidth, plotHeight)}
+                  >
                     {toothCountForItem(span.item)} teeth
-                  </text>
+                  </span>
                 </>
               ) : null}
-              {hitWidth > featureWidth ? (
-                <rect
-                  x={hitX}
-                  y={padding.top}
-                  width={hitWidth}
-                  height={plotHeight}
-                  className="profile-hit"
-                  onClick={() => onSelect(span.item.id)}
-                />
-              ) : null}
-              <text x={(xForS(span.startS) + xForS(span.endS)) / 2} y={yForR(radius) - 7} className="feature-label">
+              <span
+                className="feature-label"
+                style={pointOverlayStyle((xForS(span.startS) + xForS(span.endS)) / 2 - hitX, yForR(radius) - 20 - padding.top, hitWidth, plotHeight)}
+              >
                 {span.item.name}
-              </text>
+              </span>
               {[
                 { id: `${span.item.id}:start`, label: `${span.item.name} start`, point: { s_mm: span.startS, r_mm: radius } },
                 { id: `${span.item.id}:end`, label: `${span.item.name} end`, point: { s_mm: span.endS, r_mm: radius } },
               ].map((anchor) => (
-                <circle
+                <button
+                  type="button"
                   key={anchor.id}
-                  cx={xForS(anchor.point.s_mm)}
-                  cy={yForR(anchor.point.r_mm)}
-                  r="5"
+                  aria-label={`Measure ${anchor.label}`}
+                  style={handleStyle(xForS(anchor.point.s_mm) - hitX, yForR(anchor.point.r_mm) - padding.top, 10, hitWidth, plotHeight)}
                   className="measure-anchor"
                   onClick={() => onMeasureAnchor(anchor)}
                 />
               ))}
-            </g>
+            </div>
           );
         })}
 
-        <line x1={padding.left} y1={yForR(0)} x2={padding.left + plotWidth} y2={yForR(0)} className="shaft-axis" />
+        <div
+          className="shaft-axis"
+          style={viewportStyle(padding.left, yForR(0), plotWidth, 1, viewWidth, viewHeight)}
+        />
 
         {planningRegions.map((region) => {
           const bounds = regionBounds(region);
-          const points = region.polygon.map((point) => `${xForS(point.s_mm)},${yForR(point.r_mm)}`).join(" ");
           return (
-            <g key={region.id} className="planning-region-layer">
-              <polygon
-                points={points}
+            <div key={region.id} className="planning-region-layer">
+              <button
+                type="button"
+                aria-label={`Select planning region ${region.name}`}
+                style={polygonHitStyle(region.polygon, xForS, yForR, viewWidth, viewHeight)}
                 className={selectedObjectId === region.id ? "region-polygon selected" : "region-polygon"}
                 onClick={() => onSelect(region.id)}
               />
@@ -1861,6 +1898,8 @@ function PlanningEditor({
                   xForS={xForS}
                   yForR={yForR}
                   eventPoint={eventPoint}
+                  viewWidth={viewWidth}
+                  viewHeight={viewHeight}
                   onSelect={onSelect}
                   onResize={onResizeAxisAlignedRegion}
                 />
@@ -1874,6 +1913,8 @@ function PlanningEditor({
                   xForS={xForS}
                   yForR={yForR}
                   eventPoint={eventPoint}
+                  viewWidth={viewWidth}
+                  viewHeight={viewHeight}
                   onSelect={onSelect}
                   onMove={onMoveRegionVertex}
                   onDelete={onDeleteRegionVertex}
@@ -1887,11 +1928,11 @@ function PlanningEditor({
                   r_mm: (point.r_mm + next.r_mm) / 2,
                 };
                 return (
-                  <circle
+                  <button
+                    type="button"
                     key={`${region.id}-edge-${edgeIndex}`}
-                    cx={xForS(midpoint.s_mm)}
-                    cy={yForR(midpoint.r_mm)}
-                    r="5"
+                    aria-label={`Add vertex after ${region.name} edge ${edgeIndex + 1}`}
+                    style={handleStyle(xForS(midpoint.s_mm), yForR(midpoint.r_mm), 10, viewWidth, viewHeight)}
                     className="edge-add-handle"
                     onClick={() => {
                       onSelect(region.id);
@@ -1900,27 +1941,36 @@ function PlanningEditor({
                   />
                 );
               })}
-            </g>
+            </div>
           );
         })}
 
         {measurement ? (
-          <g className="measurement-overlay">
-            <line
-              x1={xForS(measurement.a.point.s_mm)}
-              y1={yForR(measurement.a.point.r_mm)}
-              x2={xForS(measurement.b.point.s_mm)}
-              y2={yForR(measurement.b.point.r_mm)}
+          <div className="measurement-overlay">
+            <div
+              className="measurement-line"
+              style={lineOverlayStyle(
+                xForS(measurement.a.point.s_mm),
+                yForR(measurement.a.point.r_mm),
+                xForS(measurement.b.point.s_mm),
+                yForR(measurement.b.point.r_mm),
+                viewWidth,
+                viewHeight,
+              )}
             />
-            <text
-              x={(xForS(measurement.a.point.s_mm) + xForS(measurement.b.point.s_mm)) / 2}
-              y={(yForR(measurement.a.point.r_mm) + yForR(measurement.b.point.r_mm)) / 2 - 10}
+            <span
+              style={pointOverlayStyle(
+                (xForS(measurement.a.point.s_mm) + xForS(measurement.b.point.s_mm)) / 2,
+                (yForR(measurement.a.point.r_mm) + yForR(measurement.b.point.r_mm)) / 2 - 20,
+                viewWidth,
+                viewHeight,
+              )}
             >
               d {formatMm(measurement.distance)} / ds {formatMm(measurement.ds)} / dr {formatMm(measurement.dr)}
-            </text>
-          </g>
+            </span>
+          </div>
         ) : null}
-      </svg>
+      </div>
       <div className="measurement-readout">
         {measurementAnchors.length === 0
           ? "No measurement anchors selected"
@@ -1930,6 +1980,310 @@ function PlanningEditor({
   );
 }
 
+type ViewportPadding = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+};
+
+function viewportStyle(x: number, y: number, width: number, height: number, viewWidth: number, viewHeight: number): CSSProperties {
+  return {
+    left: `${(x / viewWidth) * 100}%`,
+    top: `${(y / viewHeight) * 100}%`,
+    width: `${(width / viewWidth) * 100}%`,
+    height: `${(height / viewHeight) * 100}%`,
+  };
+}
+
+function pointOverlayStyle(x: number, y: number, viewWidth: number, viewHeight: number): CSSProperties {
+  return {
+    left: `${(x / viewWidth) * 100}%`,
+    top: `${(y / viewHeight) * 100}%`,
+  };
+}
+
+function handleStyle(x: number, y: number, size: number, viewWidth: number, viewHeight: number): CSSProperties {
+  return {
+    left: `${((x - size / 2) / viewWidth) * 100}%`,
+    top: `${((y - size / 2) / viewHeight) * 100}%`,
+    width: `${(size / viewWidth) * 100}%`,
+    height: `${(size / viewHeight) * 100}%`,
+  };
+}
+
+function polygonHitStyle(
+  polygon: PointSr[],
+  xForS: (sMm: number) => number,
+  yForR: (rMm: number) => number,
+  viewWidth: number,
+  viewHeight: number,
+): CSSProperties {
+  const xs = polygon.map((point) => xForS(point.s_mm));
+  const ys = polygon.map((point) => yForR(point.r_mm));
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return viewportStyle(minX, minY, Math.max(8, maxX - minX), Math.max(8, maxY - minY), viewWidth, viewHeight);
+}
+
+function lineOverlayStyle(x1: number, y1: number, x2: number, y2: number, viewWidth: number, viewHeight: number): CSSProperties {
+  const length = Math.hypot(x2 - x1, y2 - y1);
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  return {
+    left: `${(x1 / viewWidth) * 100}%`,
+    top: `${(y1 / viewHeight) * 100}%`,
+    width: `${(length / viewWidth) * 100}%`,
+    transform: `rotate(${angle}rad)`,
+  };
+}
+
+function renderPlanningWebgl(
+  canvas: HTMLCanvasElement,
+  context: {
+    viewWidth: number;
+    viewHeight: number;
+    padding: ViewportPadding;
+    plotWidth: number;
+    plotHeight: number;
+    minS: number;
+    maxS: number;
+    minR: number;
+    maxR: number;
+    stockStartS: number;
+    stockEndS: number;
+    stockRadius: number;
+    selectedObjectId: string | null;
+    protectedIntervals: NonNullable<HobgoblinProject["setup"]["protected_intervals"]>;
+    spans: ReturnType<typeof stackSpans>;
+    planningRegions: PlanningRegion[];
+    xForS: (sMm: number) => number;
+    yForR: (rMm: number) => number;
+    rectForRadius: (radiusMm: number) => { y: number; height: number };
+    isGearFeature: (item: StackItem) => boolean;
+    moduleForItem: (item: StackItem) => number;
+  },
+) {
+  const gl = canvas.getContext("webgl", { antialias: true, alpha: false, preserveDrawingBuffer: true });
+  if (!gl) {
+    return;
+  }
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const nextWidth = Math.max(1, Math.round(rect.width * dpr));
+  const nextHeight = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+  }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(1, 1, 1, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+  const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+  if (!vertexShader || !fragmentShader) {
+    return;
+  }
+  gl.shaderSource(vertexShader, "attribute vec2 a_position; void main(){ gl_Position = vec4(a_position, 0.0, 1.0); }");
+  gl.shaderSource(fragmentShader, "precision mediump float; uniform vec4 u_color; void main(){ gl_FragColor = u_color; }");
+  gl.compileShader(vertexShader);
+  gl.compileShader(fragmentShader);
+  const program = gl.createProgram();
+  if (!program) {
+    return;
+  }
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  gl.useProgram(program);
+  const positionLocation = gl.getAttribLocation(program, "a_position");
+  const colorLocation = gl.getUniformLocation(program, "u_color");
+  const buffer = gl.createBuffer();
+  if (!buffer || !colorLocation) {
+    return;
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  const toClip = (x: number, y: number) => [
+    (x / context.viewWidth) * 2 - 1,
+    1 - (y / context.viewHeight) * 2,
+  ];
+  const draw = (vertices: number[], color: [number, number, number, number], mode = gl.TRIANGLES) => {
+    gl.uniform4f(colorLocation, color[0], color[1], color[2], color[3]);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STREAM_DRAW);
+    gl.drawArrays(mode, 0, vertices.length / 2);
+  };
+  const rectVertices = (x: number, y: number, width: number, height: number) => {
+    const p1 = toClip(x, y);
+    const p2 = toClip(x + width, y);
+    const p3 = toClip(x, y + height);
+    const p4 = toClip(x + width, y + height);
+    return [...p1, ...p3, ...p2, ...p2, ...p3, ...p4];
+  };
+  const lineRect = (x: number, y: number, width: number, height: number, color: [number, number, number, number]) => {
+    draw(rectVertices(x, y, width, height), color);
+  };
+  const shadedRect = (
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    colors: Array<[number, number, number, number]>,
+  ) => {
+    const bands = colors.length;
+    for (let index = 0; index < bands; index += 1) {
+      lineRect(x, y + (height * index) / bands, width, height / bands + 0.5, colors[index]);
+    }
+  };
+  const polygonVertices = (points: Array<[number, number]>) => {
+    if (points.length < 3) {
+      return [];
+    }
+    const first = points[0];
+    const vertices: number[] = [];
+    for (let index = 1; index < points.length - 1; index += 1) {
+      vertices.push(...toClip(first[0], first[1]), ...toClip(points[index][0], points[index][1]), ...toClip(points[index + 1][0], points[index + 1][1]));
+    }
+    return vertices;
+  };
+  const drawStroke = (points: Array<[number, number]>, color: [number, number, number, number], width = 1.5) => {
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const [x1, y1] = points[index];
+      const [x2, y2] = points[index + 1];
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const length = Math.hypot(dx, dy);
+      if (length <= 0.001) {
+        continue;
+      }
+      const nx = (-dy / length) * width / 2;
+      const ny = (dx / length) * width / 2;
+      draw([
+        ...toClip(x1 - nx, y1 - ny),
+        ...toClip(x1 + nx, y1 + ny),
+        ...toClip(x2 - nx, y2 - ny),
+        ...toClip(x2 - nx, y2 - ny),
+        ...toClip(x1 + nx, y1 + ny),
+        ...toClip(x2 + nx, y2 + ny),
+      ], color);
+    }
+  };
+  const toothVertices = (xStart: number, xEnd: number, outerRadius: number, rootRadius: number, side: 1 | -1) => {
+    const toothCount = Math.max(6, Math.min(44, Math.round((xEnd - xStart) / 6)));
+    const pitch = (xEnd - xStart) / toothCount;
+    const vertices: number[] = [];
+    const rootY = context.yForR(side * rootRadius);
+    const outerY = context.yForR(side * outerRadius);
+    for (let index = 0; index < toothCount; index += 1) {
+      const x0 = xStart + pitch * index;
+      const x1 = x0 + pitch * 0.24;
+      const xm = x0 + pitch * 0.5;
+      const x2 = x0 + pitch * 0.76;
+      vertices.push(...toClip(x1, rootY), ...toClip(xm, outerY), ...toClip(x2, rootY));
+    }
+    return vertices;
+  };
+
+  lineRect(context.padding.left, context.padding.top, context.plotWidth, context.plotHeight, [0.98, 0.99, 0.97, 1]);
+  for (let x = context.padding.left; x <= context.padding.left + context.plotWidth; x += 40) {
+    lineRect(x, context.padding.top, 1, context.plotHeight, [0.9, 0.93, 0.9, 1]);
+  }
+  for (let y = context.padding.top; y <= context.padding.top + context.plotHeight; y += 40) {
+    lineRect(context.padding.left, y, context.plotWidth, 1, [0.9, 0.93, 0.9, 1]);
+  }
+
+  if (context.stockStartS >= context.minS && context.stockStartS <= context.maxS) {
+    lineRect(context.xForS(context.stockStartS), context.padding.top, 1.5, context.plotHeight, [0.54, 0.35, 0.13, 1]);
+  }
+  for (const interval of context.protectedIntervals) {
+    const visibleStartS = Math.max(context.minS, interval.start_s_mm);
+    const visibleEndS = Math.min(context.maxS, interval.end_s_mm);
+    if (visibleEndS <= visibleStartS) {
+      continue;
+    }
+    lineRect(context.xForS(visibleStartS), context.padding.top, context.xForS(visibleEndS) - context.xForS(visibleStartS), context.plotHeight, [0.82, 0.44, 0.32, interval.id === context.selectedObjectId ? 0.36 : 0.2]);
+  }
+
+  const stockRect = context.rectForRadius(context.stockRadius);
+  const stockX = context.xForS(context.stockStartS);
+  const stockWidth = context.xForS(context.stockEndS) - context.xForS(context.stockStartS);
+  shadedRect(stockX, stockRect.y, stockWidth, stockRect.height, [
+    [0.96, 0.89, 0.75, 1],
+    [0.9, 0.71, 0.42, 1],
+    [0.77, 0.54, 0.25, 1],
+    [0.9, 0.71, 0.42, 1],
+    [0.98, 0.93, 0.82, 1],
+  ]);
+  drawStroke([
+    [stockX, stockRect.y],
+    [stockX + stockWidth, stockRect.y],
+    [stockX + stockWidth, stockRect.y + stockRect.height],
+    [stockX, stockRect.y + stockRect.height],
+    [stockX, stockRect.y],
+  ], context.selectedObjectId?.startsWith("stock.") ? [0.73, 0.45, 0.16, 1] : [0.75, 0.48, 0.2, 1], 1.5);
+
+  for (const span of context.spans) {
+    const radius = radiusForItem(span.item);
+    const gearFeature = context.isGearFeature(span.item);
+    const rootRadius = gearFeature
+      ? Math.max(radius * 0.62, radius - context.moduleForItem(span.item) * 1.25)
+      : radius;
+    const featureRect = context.rectForRadius(rootRadius);
+    const xStart = context.xForS(span.startS);
+    const xEnd = context.xForS(span.endS);
+    const colorBands: Array<[number, number, number, number]> = gearFeature
+      ? [
+          [0.78, 0.88, 0.84, 1],
+          [0.58, 0.75, 0.69, 1],
+          [0.39, 0.58, 0.53, 1],
+          [0.58, 0.75, 0.69, 1],
+          [0.85, 0.93, 0.9, 1],
+        ]
+      : [
+          [0.88, 0.94, 0.92, 1],
+          [0.7, 0.82, 0.79, 1],
+          [0.5, 0.65, 0.62, 1],
+          [0.7, 0.82, 0.79, 1],
+          [0.93, 0.97, 0.95, 1],
+        ];
+    shadedRect(xStart, featureRect.y, xEnd - xStart, featureRect.height, colorBands);
+    const outlineColor: [number, number, number, number] = span.item.id === context.selectedObjectId
+      ? [0.17, 0.44, 0.33, 1]
+      : gearFeature
+        ? [0.35, 0.48, 0.45, 1]
+        : [0.4, 0.47, 0.48, 1];
+    drawStroke([
+      [xStart, featureRect.y],
+      [xEnd, featureRect.y],
+      [xEnd, featureRect.y + featureRect.height],
+      [xStart, featureRect.y + featureRect.height],
+      [xStart, featureRect.y],
+    ], outlineColor, span.item.id === context.selectedObjectId ? 2.5 : 1.5);
+    if (gearFeature) {
+      const toothColor: [number, number, number, number] = span.item.id === context.selectedObjectId
+        ? [0.49, 0.76, 0.64, 1]
+        : [0.6, 0.78, 0.72, 1];
+      for (const side of [1, -1] as const) {
+        draw(toothVertices(xStart, xEnd, radius, rootRadius, side), toothColor);
+      }
+    }
+  }
+
+  for (const region of context.planningRegions) {
+    const points = region.polygon.map((point) => [context.xForS(point.s_mm), context.yForR(point.r_mm)] as [number, number]);
+    const fillColor: [number, number, number, number] = region.id === context.selectedObjectId ? [0.49, 0.76, 0.64, 0.28] : [0.27, 0.52, 0.68, 0.18];
+    draw(polygonVertices(points), fillColor);
+    drawStroke([...points, points[0]], region.id === context.selectedObjectId ? [0.17, 0.44, 0.33, 0.85] : [0.25, 0.5, 0.65, 0.75], 2);
+  }
+  lineRect(context.padding.left, context.yForR(0), context.plotWidth, 1.5, [0.32, 0.39, 0.4, 1]);
+}
+
 function RegionVertexHandle({
   region,
   vertexIndex,
@@ -1937,6 +2291,8 @@ function RegionVertexHandle({
   xForS,
   yForR,
   eventPoint,
+  viewWidth,
+  viewHeight,
   onSelect,
   onMove,
   onDelete,
@@ -1947,17 +2303,19 @@ function RegionVertexHandle({
   point: PointSr;
   xForS: (sMm: number) => number;
   yForR: (rMm: number) => number;
-  eventPoint: (event: React.PointerEvent<SVGElement>) => PointSr;
+  eventPoint: (event: React.PointerEvent<HTMLElement>) => PointSr;
+  viewWidth: number;
+  viewHeight: number;
   onSelect: (objectId: string) => void;
   onMove: (regionId: string, vertexIndex: number, point: PointSr) => void;
   onDelete: (regionId: string, vertexIndex: number) => void;
   onMeasureAnchor: (anchor: MeasurementAnchor) => void;
 }) {
   return (
-    <circle
-      cx={xForS(point.s_mm)}
-      cy={yForR(point.r_mm)}
-      r="7"
+    <button
+      type="button"
+      aria-label={`${region.name} vertex ${vertexIndex + 1}`}
+      style={handleStyle(xForS(point.s_mm), yForR(point.r_mm), 14, viewWidth, viewHeight)}
       className="vertex-handle"
       onClick={() => {
         onSelect(region.id);
@@ -1987,6 +2345,8 @@ function AxisAlignedHandles({
   xForS,
   yForR,
   eventPoint,
+  viewWidth,
+  viewHeight,
   onSelect,
   onResize,
 }: {
@@ -1994,7 +2354,9 @@ function AxisAlignedHandles({
   bounds: RegionBounds;
   xForS: (sMm: number) => number;
   yForR: (rMm: number) => number;
-  eventPoint: (event: React.PointerEvent<SVGElement>) => PointSr;
+  eventPoint: (event: React.PointerEvent<HTMLElement>) => PointSr;
+  viewWidth: number;
+  viewHeight: number;
   onSelect: (objectId: string) => void;
   onResize: (regionId: string, bounds: RegionBounds) => void;
 }) {
@@ -2007,13 +2369,11 @@ function AxisAlignedHandles({
   return (
     <>
       {handles.map((handle) => (
-        <rect
+        <button
+          type="button"
           key={`${region.id}-${handle.id}`}
-          x={handle.x - 6}
-          y={handle.y - 6}
-          width="12"
-          height="12"
-          rx="2"
+          aria-label={`Resize ${region.name} ${handle.id}`}
+          style={handleStyle(handle.x, handle.y, 12, viewWidth, viewHeight)}
           className="axis-handle"
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
