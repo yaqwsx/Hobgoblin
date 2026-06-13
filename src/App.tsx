@@ -12,7 +12,6 @@ import {
   Database,
   FileDown,
   FileUp,
-  FolderOpen,
   HardDrive,
   Layers,
   ListTree,
@@ -63,6 +62,8 @@ import {
 import {
   isTauriRuntime,
   loadProjectFromPath,
+  pickProjectOpenPath,
+  pickProjectSavePath,
   saveProjectToPath,
   validateProjectSource,
   type ValidationDiagnostic,
@@ -74,6 +75,7 @@ interface LoadedProject {
   project: HobgoblinProject;
   validation: ValidationResponse;
   pathLabel: string;
+  savePath: string | null;
 }
 
 const samplePath = "examples/projects/simple_spur_stack.hobgoblin.json";
@@ -240,8 +242,6 @@ const defaultLibraryConfig: LibraryConfig = {
 
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [projectPath, setProjectPath] = useState(samplePath);
-  const [savePath, setSavePath] = useState(samplePath);
   const [loaded, setLoaded] = useState<LoadedProject | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [status, setStatus] = useState("No project loaded");
@@ -333,16 +333,20 @@ export function App() {
     setSelectedObjectId(objectId);
   }
 
-  async function openFromPath() {
+  async function openProject() {
     if (!isTauriRuntime()) {
-      setStatus("Path loading is available in the desktop runtime");
+      fileInputRef.current?.click();
       return;
     }
     try {
-      const response = await loadProjectFromPath(projectPath);
-      applyLoadedSource(response.source, response.validation, projectPath);
-      setSavePath(projectPath);
-      setStatus(`Loaded ${projectPath}`);
+      const path = await pickProjectOpenPath();
+      if (!path) {
+        setStatus("Open canceled");
+        return;
+      }
+      const response = await loadProjectFromPath(path);
+      applyLoadedSource(response.source, response.validation, path, path);
+      setStatus(`Loaded ${path}`);
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -352,9 +356,7 @@ export function App() {
     if (isTauriRuntime()) {
       try {
         const response = await loadProjectFromPath(samplePath);
-        applyLoadedSource(response.source, response.validation, samplePath);
-        setProjectPath(samplePath);
-        setSavePath(samplePath);
+        applyLoadedSource(response.source, response.validation, samplePath, samplePath);
         setStatus(`Loaded ${samplePath}`);
       } catch (error) {
         setStatus(errorMessage(error));
@@ -369,9 +371,7 @@ export function App() {
       }
       const source = await response.text();
       const validation = await validateSource(source);
-      applyLoadedSource(source, validation, samplePath);
-      setProjectPath(samplePath);
-      setSavePath(samplePath);
+      applyLoadedSource(source, validation, samplePath, samplePath);
       setStatus(`Loaded ${samplePath}`);
     } catch (error) {
       setStatus(errorMessage(error));
@@ -382,7 +382,7 @@ export function App() {
     try {
       const source = await file.text();
       const validation = await validateSource(source);
-      applyLoadedSource(source, validation, file.name);
+      applyLoadedSource(source, validation, file.name, null);
       setStatus(`Loaded ${file.name}`);
     } catch (error) {
       setStatus(errorMessage(error));
@@ -392,9 +392,7 @@ export function App() {
   function newProject() {
     const project = createDefaultProject();
     const source = JSON.stringify(project, null, 2);
-    applyLoadedSource(source, validateProjectInBrowser(source), "untitled.hobgoblin.json");
-    setProjectPath("untitled.hobgoblin.json");
-    setSavePath("untitled.hobgoblin.json");
+    applyLoadedSource(source, validateProjectInBrowser(source), "untitled.hobgoblin.json", null);
     setStatus("Created new shaft project");
   }
 
@@ -404,9 +402,17 @@ export function App() {
       return;
     }
     if (isTauriRuntime()) {
+      const targetPath = loaded.savePath ?? (await pickProjectSavePath(fileNameFromPathLabel(loaded.pathLabel)));
+      if (!targetPath) {
+        setStatus("Save canceled");
+        return;
+      }
       try {
-        await saveProjectToPath(savePath, loaded.source);
-        setStatus(`Saved ${savePath}`);
+        await saveProjectToPath(targetPath, loaded.source);
+        if (targetPath !== loaded.savePath) {
+          setLoaded({ ...loaded, pathLabel: targetPath, savePath: targetPath });
+        }
+        setStatus(`Saved ${targetPath}`);
       } catch (error) {
         setStatus(errorMessage(error));
       }
@@ -417,7 +423,7 @@ export function App() {
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
-    link.download = savePath.split(/[\\/]/).pop() || "project.hobgoblin.json";
+    link.download = fileNameFromPathLabel(loaded.pathLabel);
     link.click();
     URL.revokeObjectURL(href);
     setStatus("Downloaded project JSON");
@@ -466,13 +472,14 @@ export function App() {
     }
   }
 
-  function applyLoadedSource(source: string, validation: ValidationResponse, pathLabel: string) {
+  function applyLoadedSource(source: string, validation: ValidationResponse, pathLabel: string, savePath: string | null) {
     const parsed = parseProjectSource(source);
     setLoaded({
       source,
       project: parsed.project,
       validation,
       pathLabel,
+      savePath,
     });
     setSelectedObjectId(parsed.project.stack[0]?.id ?? parsed.project.stock.id);
     setMeasurementAnchors([]);
@@ -885,8 +892,7 @@ export function App() {
         <div className="command-ribbon" aria-label="Project commands">
           <CommandGroup label="File">
             <CommandButton icon={<CirclePlus aria-hidden="true" />} label="New" onClick={newProject} />
-            <CommandButton icon={<FileUp aria-hidden="true" />} label="Open" onClick={() => fileInputRef.current?.click()} />
-            <CommandButton icon={<FolderOpen aria-hidden="true" />} label="Path" onClick={openFromPath} />
+            <CommandButton icon={<FileUp aria-hidden="true" />} label="Open" onClick={openProject} />
             <CommandButton icon={<FileDown aria-hidden="true" />} label="Sample" onClick={loadSampleProject} />
             <CommandButton icon={<Save aria-hidden="true" />} label="Save" onClick={saveProject} disabled={!loaded} />
           </CommandGroup>
@@ -942,21 +948,6 @@ export function App() {
           />
         </div>
       </header>
-
-      <section className="pathbar" aria-label="Project file paths">
-        <label>
-          <span>Load path</span>
-          <input value={projectPath} onChange={(event) => setProjectPath(event.target.value)} />
-        </label>
-        <label>
-          <span>Save path</span>
-          <input value={savePath} onChange={(event) => setSavePath(event.target.value)} />
-        </label>
-        <div className="runtime-pill">
-          <Database aria-hidden="true" />
-          {isTauriRuntime() ? "Rust kernel connected" : "Browser preview"}
-        </div>
-      </section>
 
       <section className="workspace">
         <aside className="feature-tree" aria-label="Feature tree">
@@ -3023,4 +3014,8 @@ function errorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function fileNameFromPathLabel(pathLabel: string): string {
+  return pathLabel.split(/[\\/]/).pop() || "project.hobgoblin.json";
 }

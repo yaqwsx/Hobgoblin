@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 export type Severity = "error" | "warning";
 
@@ -38,4 +39,20 @@ export async function loadProjectFromPath(path: string): Promise<ProjectLoadResp
 
 export async function saveProjectToPath(path: string, source: string): Promise<void> {
   return invoke<void>("save_project_to_path", { path, source });
+}
+
+export async function pickProjectOpenPath(): Promise<string | null> {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "Hobgoblin project", extensions: ["json"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function pickProjectSavePath(defaultPath?: string): Promise<string | null> {
+  const selected = await save({
+    defaultPath,
+    filters: [{ name: "Hobgoblin project", extensions: ["json"] }],
+  });
+  return typeof selected === "string" ? selected : null;
 }
