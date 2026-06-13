@@ -36,6 +36,22 @@ async function expectSelectedProfileLabel(text) {
 try {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.getByText("Simple spur stack").waitFor();
+  const topbarBox = await page.locator(".topbar").boundingBox();
+  const workspaceBox = await page.locator(".workspace").boundingBox();
+  assert(topbarBox !== null, "expected top command ribbon to be measurable");
+  assert(workspaceBox !== null, "expected workspace to be measurable");
+  assert(
+    topbarBox.height <= 88,
+    `expected compact command ribbon at 1440px viewport, got height=${topbarBox.height.toFixed(2)} px`,
+  );
+  assert(
+    workspaceBox.y <= 96,
+    `expected workspace to start near top of viewport, got y=${workspaceBox.y.toFixed(2)} px`,
+  );
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "expected compact command ribbon to avoid document-level horizontal overflow",
+  );
   await page.locator(".feature-tree").getByText("20T spur gear").waitFor();
   const featureTreeBox = await page.locator(".feature-tree").boundingBox();
   const visibleStackAction = page
@@ -79,6 +95,12 @@ try {
     const button = ribbon.getByRole("button", { name, exact: true });
     await button.waitFor();
     assert((await button.getAttribute("title")) !== null, `expected ${name} command to expose a title`);
+    const buttonBox = await button.boundingBox();
+    assert(buttonBox !== null, `expected ${name} command to be measurable`);
+    assert(
+      buttonBox.x >= 0 && buttonBox.x + buttonBox.width <= 1440,
+      `expected ${name} command to be visible in the 1440px ribbon viewport`,
+    );
   }
   await ribbon.getByRole("button", { name: "Select mode", exact: true }).waitFor();
   await ribbon.getByRole("button", { name: "Measure mode", exact: true }).waitFor();

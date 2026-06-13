@@ -1149,7 +1149,7 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
 
 function CommandGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="command-group">
+    <div className={`command-group command-group-${label.toLowerCase()}`}>
       <span>{label}</span>
       <div className="command-group-actions">{children}</div>
     </div>
