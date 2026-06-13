@@ -92,6 +92,7 @@ button {
   gap: 8px;
   flex: 1 1 0;
   min-width: 0;
+  contain: paint;
   overflow-x: auto;
   overflow-y: hidden;
   padding-bottom: 2px;

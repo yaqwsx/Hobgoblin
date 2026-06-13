@@ -82,6 +82,36 @@ try {
   ]) {
     await page.setViewportSize({ width, height: 960 });
     await expectAdjacentInspectorLayout({ minEditorWidth });
+    assert(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      `expected page to avoid document-level horizontal overflow at ${width}px viewport`,
+    );
+    if (width === 1024) {
+      const ribbonScroll = await page.evaluate(() => {
+        const ribbonElement = document.querySelector(".command-ribbon");
+        if (!(ribbonElement instanceof HTMLElement)) {
+          return null;
+        }
+        const initialLeft = ribbonElement.scrollLeft;
+        ribbonElement.scrollLeft = ribbonElement.scrollWidth;
+        const scrolledLeft = ribbonElement.scrollLeft;
+        ribbonElement.scrollLeft = initialLeft;
+        return {
+          clientWidth: ribbonElement.clientWidth,
+          scrollWidth: ribbonElement.scrollWidth,
+          scrolledLeft,
+        };
+      });
+      assert(ribbonScroll !== null, "expected command ribbon to be measurable");
+      assert(
+        ribbonScroll.scrollWidth > ribbonScroll.clientWidth,
+        "expected compact command ribbon to keep internal horizontal scrolling at 1024px",
+      );
+      assert(
+        ribbonScroll.scrolledLeft > 0,
+        "expected compact command ribbon to allow scrolling to offscreen commands at 1024px",
+      );
+    }
   }
   await page.setViewportSize({ width: 1440, height: 960 });
   const visibleStackAction = page
