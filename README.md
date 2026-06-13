@@ -66,7 +66,8 @@ npm run dev
 
 `npm run dev` starts the browser UI on port 1420 when it is free. If that port
 is already occupied, Vite will choose the next available port and print the URL
-to open. Native Tauri development uses the fixed URL from `src-tauri/tauri.conf.json`:
+to open. Native Tauri development uses the fixed URL from
+`src-tauri/tauri.conf.json`:
 
 ```sh
 npm run tauri dev
@@ -76,6 +77,18 @@ If a Hobgoblin Vite server is already running on port 1420, the Tauri dev
 wrapper reuses it. If another process owns the port, the wrapper prints a
 command for finding the owner.
 
-The frontend build is covered by CI. Native `npm run tauri dev` requires the platform Tauri/WebKit system dependencies. With the current Rust 1.96 toolchain, `cargo check --manifest-path src-tauri/Cargo.toml` is blocked by an upstream `cookie` crate compatibility error in Tauri's Linux dependency graph; the frontend shell and Tauri command sources are still present for native builds once that dependency stack is usable.
+Native `npm run tauri dev` requires the platform Tauri/WebKit system
+dependencies. CI installs the Linux dependencies and covers:
+
+```sh
+npm ci
+npm run build
+npm run dev
+HOBGOBLIN_UI_URL=http://127.0.0.1:1420/?sample=1 npm run test:ui
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+```
+
+The UI smoke command expects a running Vite server; CI starts `npm run dev` in
+the background before invoking it.
 
 CI runs these checks on pushes to `main`, pull requests, and manual dispatch.
