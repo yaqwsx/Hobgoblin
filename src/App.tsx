@@ -1454,6 +1454,8 @@ function PlanningEditor({
   const padding = { left: 56, right: 24, top: 24, bottom: 50 };
   const plotWidth = viewWidth - padding.left - padding.right;
   const plotHeight = viewHeight - padding.top - padding.bottom;
+  const gridMinorS = niceGridStep(sRange, plotWidth, 36);
+  const gridMinorD = niceGridStep(rRange * 2, plotHeight, 36);
 
   const xForS = (sMm: number) => padding.left + ((sMm - minS) / sRange) * plotWidth;
   const yForR = (rMm: number) => padding.top + (1 - (rMm - minR) / rRange) * plotHeight;
@@ -1491,22 +1493,6 @@ function PlanningEditor({
     const spur = typeof item.spur === "object" && item.spur !== null ? (item.spur as Record<string, unknown>) : null;
     const nested = typeof spur?.module_mm === "number" ? spur.module_mm : null;
     return Math.max(0.05, direct ?? nested ?? Math.max(0.1, radiusForItem(item) * 0.08));
-  };
-  const gearToothPath = (xStart: number, xEnd: number, outerRadius: number, rootRadius: number, side: 1 | -1) => {
-    const toothCount = Math.max(6, Math.min(36, Math.round((xEnd - xStart) / 7)));
-    const pitch = (xEnd - xStart) / toothCount;
-    const rootY = yForR(side * rootRadius);
-    const outerY = yForR(side * outerRadius);
-    const innerY = yForR(side * (rootRadius - Math.max(0.05, (outerRadius - rootRadius) * 0.35)));
-    const points = [`${xStart},${innerY}`, `${xStart},${rootY}`];
-    for (let index = 0; index < toothCount; index += 1) {
-      const x0 = xStart + pitch * index;
-      points.push(`${x0 + pitch * 0.2},${rootY}`);
-      points.push(`${x0 + pitch * 0.5},${outerY}`);
-      points.push(`${x0 + pitch * 0.8},${rootY}`);
-    }
-    points.push(`${xEnd},${rootY}`, `${xEnd},${innerY}`);
-    return points.join(" ");
   };
 
   const setZoom = (nextZoom: number) => {
@@ -1615,6 +1601,8 @@ function PlanningEditor({
       rectForRadius,
       isGearFeature,
       moduleForItem,
+      gridMinorS,
+      gridMinorD,
     });
   }, [
     viewZoom,
@@ -1629,6 +1617,8 @@ function PlanningEditor({
     maxS,
     minR,
     maxR,
+    gridMinorS,
+    gridMinorD,
   ]);
 
   return (
@@ -1711,6 +1701,9 @@ function PlanningEditor({
           width={viewWidth}
           height={viewHeight}
           data-renderer="webgl"
+          data-grid="dynamic-model-space"
+          data-grid-minor-s={gridMinorS}
+          data-grid-minor-d={gridMinorD}
           aria-hidden="true"
         />
         <div
@@ -2039,6 +2032,30 @@ function lineOverlayStyle(x1: number, y1: number, x2: number, y2: number, viewWi
   };
 }
 
+function niceGridStep(rangeMm: number, pixelSize: number, targetPixels: number) {
+  const rawStep = Math.max(0.0001, rangeMm / Math.max(1, pixelSize / targetPixels));
+  const exponent = Math.floor(Math.log10(rawStep));
+  const magnitude = 10 ** exponent;
+  const normalized = rawStep / magnitude;
+  const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return niceNormalized * magnitude;
+}
+
+function gridLines(min: number, max: number, minorStep: number) {
+  const lines: Array<{ value: number; major: boolean }> = [];
+  const safeStep = Math.max(0.0001, minorStep);
+  const first = Math.floor(min / safeStep) * safeStep;
+  const epsilon = safeStep * 0.001;
+  for (let value = first; value <= max + epsilon; value += safeStep) {
+    if (value < min - epsilon) {
+      continue;
+    }
+    const unitIndex = Math.round(value / safeStep);
+    lines.push({ value: Math.abs(value) < epsilon ? 0 : value, major: unitIndex % 5 === 0 });
+  }
+  return lines;
+}
+
 function renderPlanningWebgl(
   canvas: HTMLCanvasElement,
   context: {
@@ -2063,6 +2080,8 @@ function renderPlanningWebgl(
     rectForRadius: (radiusMm: number) => { y: number; height: number };
     isGearFeature: (item: StackItem) => boolean;
     moduleForItem: (item: StackItem) => number;
+    gridMinorS: number;
+    gridMinorD: number;
   },
 ) {
   const gl = canvas.getContext("webgl", { antialias: true, alpha: false, preserveDrawingBuffer: true });
@@ -2191,11 +2210,31 @@ function renderPlanningWebgl(
   };
 
   lineRect(context.padding.left, context.padding.top, context.plotWidth, context.plotHeight, [0.98, 0.99, 0.97, 1]);
-  for (let x = context.padding.left; x <= context.padding.left + context.plotWidth; x += 40) {
-    lineRect(x, context.padding.top, 1, context.plotHeight, [0.9, 0.93, 0.9, 1]);
+  for (const line of gridLines(context.minS, context.maxS, context.gridMinorS)) {
+    const x = context.xForS(line.value);
+    if (x < context.padding.left - 1 || x > context.padding.left + context.plotWidth + 1) {
+      continue;
+    }
+    lineRect(
+      x,
+      context.padding.top,
+      line.major ? 1.25 : 0.75,
+      context.plotHeight,
+      line.major ? [0.82, 0.87, 0.86, 1] : [0.91, 0.94, 0.93, 1],
+    );
   }
-  for (let y = context.padding.top; y <= context.padding.top + context.plotHeight; y += 40) {
-    lineRect(context.padding.left, y, context.plotWidth, 1, [0.9, 0.93, 0.9, 1]);
+  for (const line of gridLines(context.minR * 2, context.maxR * 2, context.gridMinorD)) {
+    const y = context.yForR(line.value / 2);
+    if (y < context.padding.top - 1 || y > context.padding.top + context.plotHeight + 1) {
+      continue;
+    }
+    lineRect(
+      context.padding.left,
+      y,
+      context.plotWidth,
+      line.major ? 1.25 : 0.75,
+      line.major ? [0.82, 0.87, 0.86, 1] : [0.91, 0.94, 0.93, 1],
+    );
   }
 
   if (context.stockStartS >= context.minS && context.stockStartS <= context.maxS) {

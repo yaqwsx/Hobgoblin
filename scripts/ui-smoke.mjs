@@ -177,22 +177,35 @@ try {
   await page.locator(".viewport-controls").getByLabel("Pan down").waitFor();
   await page.locator(".datum-marker").getByText("datum").waitFor();
   await page.locator(".axis-label").getByText("d / mm", { exact: true }).waitFor();
-  await page.locator("canvas.planning-webgl-canvas[data-renderer='webgl']").waitFor();
+  await page.locator("canvas.planning-webgl-canvas[data-renderer='webgl'][data-grid='dynamic-model-space']").waitFor();
+  const initialGrid = await page.locator("canvas.planning-webgl-canvas").evaluate((canvas) => ({
+    minorS: Number(canvas.getAttribute("data-grid-minor-s")),
+    minorD: Number(canvas.getAttribute("data-grid-minor-d")),
+  }));
+  assert(
+    Number.isFinite(initialGrid.minorS) && initialGrid.minorS > 0,
+    `expected dynamic grid to expose positive shaft-length spacing, got ${initialGrid.minorS}`,
+  );
+  assert(
+    Number.isFinite(initialGrid.minorD) && initialGrid.minorD > 0,
+    `expected dynamic grid to expose positive diameter spacing, got ${initialGrid.minorD}`,
+  );
   const webglStats = await page.locator("canvas.planning-webgl-canvas").evaluate((canvas) => {
     const context = canvas.getContext("2d");
     if (context) {
       const sample = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      return { hasPixels: sample.some((value, index) => index % 4 !== 3 && value < 250), distinctColors: 0, shaftPixels: 0, stockPixels: 0 };
+      return { hasPixels: sample.some((value, index) => index % 4 !== 3 && value < 250), distinctColors: 0, shaftPixels: 0, stockPixels: 0, gridPixels: 0 };
     }
     const gl = canvas.getContext("webgl");
     if (!gl) {
-      return { hasPixels: false, distinctColors: 0, shaftPixels: 0, stockPixels: 0 };
+      return { hasPixels: false, distinctColors: 0, shaftPixels: 0, stockPixels: 0, gridPixels: 0 };
     }
     const pixels = new Uint8Array(canvas.width * canvas.height * 4);
     gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     let hasPixels = false;
     let shaftPixels = 0;
     let stockPixels = 0;
+    let gridPixels = 0;
     const colors = new Set();
     for (let index = 0; index < pixels.length; index += 16) {
       const r = pixels[index];
@@ -207,9 +220,12 @@ try {
       if (r > g * 1.1 && g > b * 1.15 && r > 120) {
         stockPixels += 1;
       }
+      if (r >= 204 && r <= 235 && g >= 214 && g <= 244 && b >= 212 && b <= 242) {
+        gridPixels += 1;
+      }
       colors.add(`${Math.round(r / 16)},${Math.round(g / 16)},${Math.round(b / 16)}`);
     }
-    return { hasPixels, distinctColors: colors.size, shaftPixels, stockPixels };
+    return { hasPixels, distinctColors: colors.size, shaftPixels, stockPixels, gridPixels };
   });
   assert(webglStats.hasPixels, "expected WebGL preview canvas to render nonblank geometry");
   assert(
@@ -224,6 +240,10 @@ try {
     webglStats.stockPixels > 1000,
     `expected WebGL preview to include stock/protected warm material pixels, got ${webglStats.stockPixels}`,
   );
+  assert(
+    webglStats.gridPixels > 1000,
+    `expected WebGL preview to include subdued dynamic grid pixels, got ${webglStats.gridPixels}`,
+  );
   assert((await page.locator(".shaft-axis").count()) === 1, "expected preview to render a central shaft axis");
   assert((await page.locator(".gear-teeth").count()) >= 2, "expected gears to render visible teeth on both sides of the shaft");
   const stockBoxBeforeNavigation = await page.locator(".stock-rect").boundingBox();
@@ -237,6 +257,14 @@ try {
   );
   await page.locator(".viewport-controls").getByLabel("Zoom out").click();
   await page.getByText("0.7x").waitFor();
+  const zoomedOutGrid = await page.locator("canvas.planning-webgl-canvas").evaluate((canvas) => ({
+    minorS: Number(canvas.getAttribute("data-grid-minor-s")),
+    minorD: Number(canvas.getAttribute("data-grid-minor-d")),
+  }));
+  assert(
+    zoomedOutGrid.minorS > initialGrid.minorS || zoomedOutGrid.minorD > initialGrid.minorD,
+    `expected grid spacing to adapt after zooming out, initial=${initialGrid.minorS}/${initialGrid.minorD} zoomed=${zoomedOutGrid.minorS}/${zoomedOutGrid.minorD}`,
+  );
   const zoomedOutStockBox = await page.locator(".stock-rect").boundingBox();
   assert(zoomedOutStockBox !== null, "expected stock material to be measurable after zooming out");
   assert(
