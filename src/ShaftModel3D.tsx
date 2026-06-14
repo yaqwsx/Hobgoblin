@@ -4,6 +4,7 @@ import {
   CylinderGeometry,
   DirectionalLight,
   ExtrudeGeometry,
+  Group,
   HemisphereLight,
   Line,
   LineBasicMaterial,
@@ -114,8 +115,15 @@ export default function ShaftModel3D({
       hasExternalInvoluteGear ||= featureMesh.userData.gearProfile === "external-involute-preview";
       featureMesh.position.x = (span.startS + span.endS) / 2;
       featureMesh.userData.featureId = span.item.id;
+      featureMesh.traverse((object) => {
+        object.userData.featureId = span.item.id;
+      });
       scene.add(featureMesh);
-      pickables.push(featureMesh);
+      if (featureMesh instanceof Group) {
+        featureMesh.children.forEach((child) => pickables.push(child));
+      } else {
+        pickables.push(featureMesh);
+      }
     }
     renderer.domElement.dataset.gearProfile = hasExternalInvoluteGear ? "external-involute-preview" : "";
 
@@ -321,73 +329,70 @@ function involuteSpurGearAlongX(item: StackItem, length: number, material: Mater
     toothPitchAngle / 4 - backlashMm / Math.max(0.1, pitchRadius * 4),
   );
   const involuteAtPitch = involuteAngle(baseRadius, Math.max(baseRadius, pitchRadius));
-  const flankSamples = 6;
-  const outline: Array<[number, number]> = [];
+  const flankSamples = 7;
+  const gearGroup = new Group();
+  const rootCylinder = cylinderAlongX(length, rootRadius, 96, material);
+  gearGroup.add(rootCylinder);
 
   const point = (radius: number, angle: number): [number, number] => [
     Math.cos(angle) * radius,
     Math.sin(angle) * radius,
   ];
-  const pushArc = (radius: number, fromAngle: number, toAngle: number, samples: number) => {
-    for (let step = 1; step <= samples; step += 1) {
+  const arcPoints = (radius: number, fromAngle: number, toAngle: number, samples: number) => {
+    const points: Array<[number, number]> = [];
+    for (let step = 0; step <= samples; step += 1) {
       const t = step / samples;
-      outline.push(point(radius, fromAngle + (toAngle - fromAngle) * t));
+      points.push(point(radius, fromAngle + (toAngle - fromAngle) * t));
     }
+    return points;
   };
 
   for (let toothIndex = 0; toothIndex < toothCount; toothIndex += 1) {
     const centerAngle = toothIndex * toothPitchAngle;
-    const nextCenterAngle = (toothIndex + 1) * toothPitchAngle;
-    const leftRootAngle = centerAngle - toothPitchAngle / 2;
     const leftBaseAngle = centerAngle - halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, baseStartRadius);
     const leftOuterAngle = centerAngle - halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, outerRadius);
     const rightOuterAngle = centerAngle + halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, outerRadius);
     const rightBaseAngle = centerAngle + halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, baseStartRadius);
-    const rightRootAngle = centerAngle + toothPitchAngle / 2;
-
-    if (outline.length === 0) {
-      outline.push(point(rootRadius, leftRootAngle));
-    } else {
-      pushArc(rootRadius, outlineAngle(outline[outline.length - 1]), leftRootAngle, 2);
-    }
-    outline.push(point(rootRadius, leftBaseAngle));
+    const outline: Array<[number, number]> = [point(rootRadius, leftBaseAngle)];
     for (let sample = 0; sample <= flankSamples; sample += 1) {
       const t = sample / flankSamples;
       const radius = baseStartRadius + (outerRadius - baseStartRadius) * t;
-      const angle = centerAngle - halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, radius);
+      const angle = centerAngle - halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, radius);
       outline.push(point(radius, angle));
     }
-    pushArc(outerRadius, leftOuterAngle, rightOuterAngle, 3);
+    outline.push(...arcPoints(outerRadius, leftOuterAngle, rightOuterAngle, 4).slice(1));
     for (let sample = flankSamples; sample >= 0; sample -= 1) {
       const t = sample / flankSamples;
       const radius = baseStartRadius + (outerRadius - baseStartRadius) * t;
-      const angle = centerAngle + halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, radius);
+      const angle = centerAngle + halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, radius);
       outline.push(point(radius, angle));
     }
     outline.push(point(rootRadius, rightBaseAngle));
-    pushArc(rootRadius, rightRootAngle, nextCenterAngle - toothPitchAngle / 2, 2);
+    outline.push(...arcPoints(rootRadius, rightBaseAngle, leftBaseAngle, 3).slice(1, -1));
+
+    const shape = new Shape();
+    outline.forEach(([y, z], index) => {
+      if (index === 0) {
+        shape.moveTo(y, z);
+      } else {
+        shape.lineTo(y, z);
+      }
+    });
+    shape.closePath();
+
+    const geometry = new ExtrudeGeometry(shape, {
+      depth: Math.max(0.1, length),
+      bevelEnabled: false,
+      steps: 1,
+    });
+    geometry.translate(0, 0, -Math.max(0.1, length) / 2);
+    const toothMesh = new Mesh(geometry, material);
+    toothMesh.rotation.y = Math.PI / 2;
+    gearGroup.add(toothMesh);
   }
 
-  const shape = new Shape();
-  outline.forEach(([y, z], index) => {
-    if (index === 0) {
-      shape.moveTo(y, z);
-    } else {
-      shape.lineTo(y, z);
-    }
-  });
-  shape.closePath();
-
-  const geometry = new ExtrudeGeometry(shape, {
-    depth: Math.max(0.1, length),
-    bevelEnabled: false,
-    steps: 1,
-  });
-  geometry.translate(0, 0, -Math.max(0.1, length) / 2);
-  const mesh = new Mesh(geometry, material);
-  mesh.rotation.y = Math.PI / 2;
-  mesh.userData.gearProfile = "external-involute-preview";
-  return mesh;
+  gearGroup.userData.gearProfile = "external-involute-preview";
+  return gearGroup;
 }
 
 function involuteAngle(baseRadius: number, radius: number) {
@@ -396,10 +401,6 @@ function involuteAngle(baseRadius: number, radius: number) {
   }
   const t = Math.sqrt((radius / baseRadius) ** 2 - 1);
   return t - Math.atan(t);
-}
-
-function outlineAngle(point: [number, number]) {
-  return Math.atan2(point[1], point[0]);
 }
 
 function moduleForStackItem(item: StackItem): number {
