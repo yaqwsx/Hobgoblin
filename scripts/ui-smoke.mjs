@@ -255,7 +255,7 @@ try {
   assert((await page.locator(".shaft-axis").count()) === 1, "expected preview to render a central shaft axis");
   assert((await page.locator(".gear-teeth").count()) >= 2, "expected gears to render visible teeth on both sides of the shaft");
   await page.getByRole("button", { name: "3D model", exact: true }).click();
-  await page.locator("canvas.shaft-3d-canvas[data-renderer='three-webgl']").waitFor();
+  await page.locator("canvas.shaft-3d-canvas[data-renderer='three-webgl'][data-gear-profile='external-involute-preview']").waitFor();
   await page.locator(".feature-tree").getByText("20T spur gear").click();
   await expectInspectorSubtitle("feature.spur_20t");
   await page.locator("canvas.shaft-3d-canvas[data-selected-object='feature.spur_20t']").waitFor();

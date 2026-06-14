@@ -96,6 +96,7 @@ export default function ShaftModel3D({
     pickables.push(stockMesh);
 
     const spans = stackSpans(project);
+    let hasExternalInvoluteGear = false;
     for (const span of spans) {
       const radius = Math.max(0.1, radiusForItem(span.item));
       const spurGear = span.item.type === "spur_gear";
@@ -110,11 +111,13 @@ export default function ShaftModel3D({
       const featureMesh = spurGear
         ? involuteSpurGearAlongX(span.item, span.endS - span.startS, featureMaterial)
         : cylinderAlongX(span.endS - span.startS, rootRadius, 72, featureMaterial);
+      hasExternalInvoluteGear ||= featureMesh.userData.gearProfile === "external-involute-preview";
       featureMesh.position.x = (span.startS + span.endS) / 2;
       featureMesh.userData.featureId = span.item.id;
       scene.add(featureMesh);
       pickables.push(featureMesh);
     }
+    renderer.domElement.dataset.gearProfile = hasExternalInvoluteGear ? "external-involute-preview" : "";
 
     for (const interval of project.setup.protected_intervals ?? []) {
       const length = Math.max(0.1, interval.end_s_mm - interval.start_s_mm);
@@ -336,10 +339,10 @@ function involuteSpurGearAlongX(item: StackItem, length: number, material: Mater
     const centerAngle = toothIndex * toothPitchAngle;
     const nextCenterAngle = (toothIndex + 1) * toothPitchAngle;
     const leftRootAngle = centerAngle - toothPitchAngle / 2;
-    const leftBaseAngle = centerAngle - halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, baseStartRadius);
-    const leftOuterAngle = centerAngle - halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, outerRadius);
-    const rightOuterAngle = centerAngle + halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, outerRadius);
-    const rightBaseAngle = centerAngle + halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, baseStartRadius);
+    const leftBaseAngle = centerAngle - halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, baseStartRadius);
+    const leftOuterAngle = centerAngle - halfToothAngle - involuteAtPitch + involuteAngle(baseRadius, outerRadius);
+    const rightOuterAngle = centerAngle + halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, outerRadius);
+    const rightBaseAngle = centerAngle + halfToothAngle + involuteAtPitch - involuteAngle(baseRadius, baseStartRadius);
     const rightRootAngle = centerAngle + toothPitchAngle / 2;
 
     if (outline.length === 0) {
@@ -383,6 +386,7 @@ function involuteSpurGearAlongX(item: StackItem, length: number, material: Mater
   geometry.translate(0, 0, -Math.max(0.1, length) / 2);
   const mesh = new Mesh(geometry, material);
   mesh.rotation.y = Math.PI / 2;
+  mesh.userData.gearProfile = "external-involute-preview";
   return mesh;
 }
 
