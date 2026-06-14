@@ -3,11 +3,13 @@ import {
   BufferGeometry,
   CylinderGeometry,
   DirectionalLight,
+  EdgesGeometry,
   ExtrudeGeometry,
   Group,
   HemisphereLight,
   Line,
   LineBasicMaterial,
+  LineSegments,
   MathUtils,
   Mesh,
   MeshStandardMaterial,
@@ -30,16 +32,19 @@ export default function ShaftModel3D({
   selectedObjectId,
   toolpaths,
   onSelect,
+  mode = "preview",
 }: {
   project: HobgoblinProject;
   selectedObjectId: string | null;
   toolpaths: GeneratedToolpath[];
   onSelect: (objectId: string) => void;
+  mode?: "preview" | "design";
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const designMode = mode === "design";
   const cameraState = useRef({
-    theta: -0.7,
-    phi: 1.1,
+    theta: designMode ? -0.72 : -0.7,
+    phi: designMode ? 1.05 : 1.1,
     distance: Math.max(project.stock.length_mm * 1.35, project.stock.diameter_mm * 5),
     target: new Vector3(project.stock.length_mm / 2, 0, 0),
     zoom: 1,
@@ -56,6 +61,12 @@ export default function ShaftModel3D({
     if (!mount) {
       return;
     }
+    if (designMode) {
+      cameraState.current.theta = -0.72;
+      cameraState.current.phi = 1.05;
+      cameraState.current.zoom = 1;
+      cameraState.current.target.set(project.stock.length_mm / 2, 0, 0);
+    }
     mount.textContent = "";
     const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setClearColor(0xf7faf4, 1);
@@ -63,6 +74,7 @@ export default function ShaftModel3D({
     renderer.domElement.className = "shaft-3d-canvas";
     renderer.domElement.dataset.renderer = "three-webgl";
     renderer.domElement.dataset.selectedObject = selectedObjectId ?? "";
+    renderer.domElement.dataset.viewMode = designMode ? "design-fixed-edges" : "preview-orbit";
     mount.appendChild(renderer.domElement);
 
     const scene = new Scene();
@@ -78,6 +90,11 @@ export default function ShaftModel3D({
     const raycaster = new Raycaster();
     const pointer = new Vector2();
     const pickables: Object3D[] = [];
+    const edgeMaterial = new LineBasicMaterial({
+      color: 0x263338,
+      transparent: true,
+      opacity: designMode ? 0.58 : 0,
+    });
 
     const stockStart = project.project.datum.s_offset_mm;
     const stockLength = project.stock.length_mm;
@@ -94,6 +111,9 @@ export default function ShaftModel3D({
     stockMesh.name = project.stock.id;
     stockMesh.userData.featureId = project.stock.id;
     scene.add(stockMesh);
+    if (designMode) {
+      addMeshEdges(stockMesh, edgeMaterial);
+    }
     pickables.push(stockMesh);
 
     const spans = stackSpans(project);
@@ -119,6 +139,9 @@ export default function ShaftModel3D({
         object.userData.featureId = span.item.id;
       });
       scene.add(featureMesh);
+      if (designMode) {
+        addObjectEdges(featureMesh, edgeMaterial);
+      }
       if (featureMesh instanceof Group) {
         featureMesh.children.forEach((child) => pickables.push(child));
       } else {
@@ -142,6 +165,9 @@ export default function ShaftModel3D({
       );
       protectedMesh.position.x = (interval.start_s_mm + interval.end_s_mm) / 2;
       scene.add(protectedMesh);
+      if (designMode) {
+        addMeshEdges(protectedMesh, edgeMaterial);
+      }
     }
 
     const pathMaterial = new LineBasicMaterial({ color: 0xd04a35 });
@@ -186,7 +212,8 @@ export default function ShaftModel3D({
       const height = Math.max(1, Math.round(bounds.height));
       const aspect = width / height;
       const state = cameraState.current;
-      const viewHeightMm = Math.max(stockRadius * 3.2, (stockLength * 1.18) / Math.max(0.1, aspect)) / state.zoom;
+      const baseViewHeightMm = Math.max(stockRadius * 3.2, (stockLength * 1.18) / Math.max(0.1, aspect));
+      const viewHeightMm = designMode ? baseViewHeightMm : baseViewHeightMm / state.zoom;
       renderer.setSize(width, height, false);
       camera.left = (-viewHeightMm * aspect) / 2;
       camera.right = (viewHeightMm * aspect) / 2;
@@ -215,10 +242,16 @@ export default function ShaftModel3D({
 
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
+      if (designMode) {
+        return;
+      }
       cameraState.current.zoom = Math.min(8, Math.max(0.25, cameraState.current.zoom * (event.deltaY > 0 ? 0.88 : 1.12)));
       render();
     };
     const onPointerDown = (event: PointerEvent) => {
+      if (designMode) {
+        return;
+      }
       renderer.domElement.setPointerCapture(event.pointerId);
       dragState.current = {
         pointerId: event.pointerId,
@@ -228,6 +261,9 @@ export default function ShaftModel3D({
       };
     };
     const onPointerMove = (event: PointerEvent) => {
+      if (designMode) {
+        return;
+      }
       const drag = dragState.current;
       if (!drag || drag.pointerId !== event.pointerId) {
         return;
@@ -292,16 +328,33 @@ export default function ShaftModel3D({
           } else {
             object.material.dispose();
           }
+        } else if (object instanceof LineSegments) {
+          object.geometry.dispose();
         }
       });
+      edgeMaterial.dispose();
     };
-  }, [project, selectedObjectId, toolpaths, onSelect]);
+  }, [project, selectedObjectId, toolpaths, onSelect, designMode]);
 
   return (
-    <div className="shaft-3d-viewer" role="img" aria-label="3D WebGL shaft model preview">
+    <div className={designMode ? "shaft-3d-viewer shaft-3d-design-viewer" : "shaft-3d-viewer"} role="img" aria-label={designMode ? "Fixed edge 3D shaft design view" : "3D WebGL shaft model preview"}>
       <div ref={mountRef} className="shaft-3d-mount" />
     </div>
   );
+}
+
+function addObjectEdges(object: Object3D, material: LineBasicMaterial) {
+  object.traverse((child) => {
+    if (child instanceof Mesh) {
+      addMeshEdges(child, material);
+    }
+  });
+}
+
+function addMeshEdges(mesh: Mesh, material: LineBasicMaterial) {
+  const edges = new LineSegments(new EdgesGeometry(mesh.geometry, 28), material);
+  edges.renderOrder = 3;
+  mesh.add(edges);
 }
 
 function cylinderAlongX(length: number, radius: number, segments: number, material: Material) {

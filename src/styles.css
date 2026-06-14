@@ -524,8 +524,16 @@ button {
   cursor: grab;
 }
 
+.shaft-3d-design-viewer .shaft-3d-canvas {
+  cursor: default;
+}
+
 .shaft-3d-canvas:active {
   cursor: grabbing;
+}
+
+.shaft-3d-design-viewer .shaft-3d-canvas:active {
+  cursor: default;
 }
 
 .library-workspace {

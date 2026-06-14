@@ -86,7 +86,7 @@ interface LoadedProject {
 const samplePath = "examples/projects/simple_spur_stack.hobgoblin.json";
 const ShaftModel3D = lazy(() => import("./ShaftModel3D"));
 type EditorMode = "select" | "measure";
-type PreviewMode = "schematic" | "model3d";
+type PreviewMode = "schematic" | "model3d" | "design3d";
 type MeasurementAnchor = {
   id: string;
   label: string;
@@ -1139,14 +1139,22 @@ export function App() {
                   >
                     3D model
                   </button>
+                  <button
+                    type="button"
+                    className={previewMode === "design3d" ? "active" : ""}
+                    onClick={() => setPreviewMode("design3d")}
+                  >
+                    3D design
+                  </button>
                 </div>
-                {previewMode === "model3d" ? (
+                {previewMode === "model3d" || previewMode === "design3d" ? (
                   <Suspense fallback={<div className="shaft-3d-viewer"><div className="shaft-3d-mount" /></div>}>
                     <ShaftModel3D
                       project={loaded.project}
                       selectedObjectId={selectedObjectId}
                       toolpaths={toolpathResult?.paths ?? []}
                       onSelect={selectProjectObject}
+                      mode={previewMode === "design3d" ? "design" : "preview"}
                     />
                   </Suspense>
                 ) : (

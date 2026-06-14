@@ -328,6 +328,10 @@ try {
   await page.mouse.move(model3dBox.x + model3dBox.width * 0.5, model3dBox.y + model3dBox.height * 0.5);
   await page.mouse.wheel(0, -300);
   await page.locator("canvas.shaft-3d-canvas[data-selected-object='feature.spur_20t']").waitFor();
+  await page.getByRole("button", { name: "3D design", exact: true }).click();
+  await page.locator("canvas.shaft-3d-canvas[data-view-mode='design-fixed-edges'][data-gear-profile='external-involute-preview']").waitFor();
+  const design3dCursor = await page.locator(".shaft-3d-design-viewer canvas.shaft-3d-canvas").evaluate((canvas) => window.getComputedStyle(canvas).cursor);
+  assert(design3dCursor === "default", `expected fixed 3D design view to use default cursor, got ${design3dCursor}`);
   await page.getByRole("button", { name: "2D schematic", exact: true }).click();
   await page.locator("canvas.planning-webgl-canvas[data-renderer='webgl'][data-grid='dynamic-model-space']").waitFor();
   const canvasStatsBeforePaths = webglStats;
