@@ -176,7 +176,7 @@ try {
   await page.locator(".viewport-controls").getByLabel("Pan up").waitFor();
   await page.locator(".viewport-controls").getByLabel("Pan down").waitFor();
   await page.locator(".datum-marker").getByText("datum").waitFor();
-  await page.locator(".axis-label").getByText("d / mm", { exact: true }).waitFor();
+  assert((await page.locator(".axis-label").count()) === 0, "expected preview to avoid chart-style unit axis labels");
   await page.locator("canvas.planning-webgl-canvas[data-renderer='webgl'][data-grid='dynamic-model-space']").waitFor();
   const initialGrid = await page.locator("canvas.planning-webgl-canvas").evaluate((canvas) => ({
     minorS: Number(canvas.getAttribute("data-grid-minor-s")),
@@ -248,9 +248,20 @@ try {
   assert((await page.locator(".gear-teeth").count()) >= 2, "expected gears to render visible teeth on both sides of the shaft");
   const stockBoxBeforeNavigation = await page.locator(".stock-rect").boundingBox();
   const shaftAxisBox = await page.locator(".shaft-axis").boundingBox();
+  const viewportBackgroundBoxBeforeNavigation = await page.locator(".viewport-background").boundingBox();
+  const viewportShellBox = await page.locator(".planning-webgl-viewport").boundingBox();
   const shaftAxisY = shaftAxisBox ? shaftAxisBox.y + shaftAxisBox.height / 2 : null;
   assert(stockBoxBeforeNavigation !== null, "expected stock material to be measurable");
   assert(shaftAxisY !== null, "expected shaft axis to be measurable");
+  assert(viewportBackgroundBoxBeforeNavigation !== null, "expected viewport background to be measurable");
+  assert(viewportShellBox !== null, "expected preview viewport shell to be measurable");
+  assert(
+    Math.abs(viewportBackgroundBoxBeforeNavigation.x - viewportShellBox.x) <= 2
+      && Math.abs(viewportBackgroundBoxBeforeNavigation.y - viewportShellBox.y) <= 2
+      && Math.abs(viewportBackgroundBoxBeforeNavigation.width - viewportShellBox.width) <= 4
+      && Math.abs(viewportBackgroundBoxBeforeNavigation.height - viewportShellBox.height) <= 4,
+    "expected model viewport background to fill the preview pane without chart margins",
+  );
   assert(
     stockBoxBeforeNavigation.y < shaftAxisY && stockBoxBeforeNavigation.y + stockBoxBeforeNavigation.height > shaftAxisY,
     "expected stock material to span both sides of the shaft axis",
@@ -270,6 +281,13 @@ try {
   assert(
     zoomedOutStockBox.width < stockBoxBeforeNavigation.width,
     `expected zooming out below fit to make stock smaller, before=${stockBoxBeforeNavigation.width.toFixed(2)} after=${zoomedOutStockBox.width.toFixed(2)}`,
+  );
+  await page.locator(".viewport-controls").getByLabel("Pan right").click();
+  const zoomedOutPannedStockBox = await page.locator(".stock-rect").boundingBox();
+  assert(zoomedOutPannedStockBox !== null, "expected stock material to be measurable after zoomed-out pan");
+  assert(
+    zoomedOutPannedStockBox.x < zoomedOutStockBox.x - 20,
+    `expected toolbar panning to move geometry while zoomed out, before=${zoomedOutStockBox.x.toFixed(2)} after=${zoomedOutPannedStockBox.x.toFixed(2)}`,
   );
   await page.locator(".viewport-controls").getByLabel("Fit stack").click();
   await page.getByText("1.0x").waitFor();

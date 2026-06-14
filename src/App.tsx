@@ -1428,14 +1428,7 @@ function PlanningEditor({
   const domainRangeS = Math.max(1, domainMaxS - domainMinS);
   const visibleRangeS = domainRangeS / viewZoom;
   const domainCenterS = (domainMinS + domainMaxS) / 2;
-  const clampVisibleCenter = (domainMin: number, domainMax: number, visibleRange: number, center: number) => {
-    const domainRange = domainMax - domainMin;
-    if (visibleRange >= domainRange) {
-      return (domainMin + domainMax) / 2;
-    }
-    return Math.min(domainMax - visibleRange / 2, Math.max(domainMin + visibleRange / 2, center));
-  };
-  const visibleCenterS = clampVisibleCenter(domainMinS, domainMaxS, visibleRangeS, domainCenterS + viewCenterOffsetS);
+  const visibleCenterS = domainCenterS + viewCenterOffsetS;
   const minS = visibleCenterS - visibleRangeS / 2;
   const maxS = visibleCenterS + visibleRangeS / 2;
   const sRange = Math.max(1, maxS - minS);
@@ -1445,13 +1438,13 @@ function PlanningEditor({
   const domainRangeR = domainMaxR - domainMinR;
   const visibleRangeR = domainRangeR / viewZoom;
   const domainCenterR = (domainMinR + domainMaxR) / 2;
-  const visibleCenterR = clampVisibleCenter(domainMinR, domainMaxR, visibleRangeR, domainCenterR + viewCenterOffsetR);
+  const visibleCenterR = domainCenterR + viewCenterOffsetR;
   const minR = visibleCenterR - visibleRangeR / 2;
   const maxR = visibleCenterR + visibleRangeR / 2;
   const rRange = Math.max(1, maxR - minR);
   const viewWidth = 1000;
   const viewHeight = 420;
-  const padding = { left: 56, right: 24, top: 24, bottom: 50 };
+  const padding = { left: 0, right: 0, top: 0, bottom: 0 };
   const plotWidth = viewWidth - padding.left - padding.right;
   const plotHeight = viewHeight - padding.top - padding.bottom;
   const gridMinorS = niceGridStep(sRange, plotWidth, 36);
@@ -1463,12 +1456,12 @@ function PlanningEditor({
   const rForY = (y: number) => minR + (1 - (y - padding.top) / plotHeight) * rRange;
   const clampCenterOffsetS = (offsetS: number, zoom = viewZoom) => {
     const nextVisibleRangeS = domainRangeS / zoom;
-    const maxOffset = Math.max(0, domainRangeS / 2 - nextVisibleRangeS / 2);
+    const maxOffset = Math.max(domainRangeS, nextVisibleRangeS);
     return Math.min(maxOffset, Math.max(-maxOffset, offsetS));
   };
   const clampCenterOffsetR = (offsetR: number, zoom = viewZoom) => {
     const nextVisibleRangeR = domainRangeR / zoom;
-    const maxOffset = Math.max(0, domainRangeR / 2 - nextVisibleRangeR / 2);
+    const maxOffset = Math.max(domainRangeR, nextVisibleRangeR);
     return Math.min(maxOffset, Math.max(-maxOffset, offsetR));
   };
   const clampPoint = (point: PointSr): PointSr => ({
@@ -1626,16 +1619,16 @@ function PlanningEditor({
       <div className="editor-toolbar">
         <span>{editorMode === "measure" ? "Measure anchors" : "Edit geometry"} / {viewZoom.toFixed(1)}x</span>
         <div className="viewport-controls" aria-label="Viewport controls">
-          <button type="button" onClick={() => panView(-1, 0)} disabled={viewZoom <= 1} title="Pan left" aria-label="Pan left">
+          <button type="button" onClick={() => panView(-1, 0)} title="Pan left" aria-label="Pan left">
             <ArrowLeft aria-hidden="true" />
           </button>
-          <button type="button" onClick={() => panView(1, 0)} disabled={viewZoom <= 1} title="Pan right" aria-label="Pan right">
+          <button type="button" onClick={() => panView(1, 0)} title="Pan right" aria-label="Pan right">
             <ArrowRight aria-hidden="true" />
           </button>
-          <button type="button" onClick={() => panView(0, 1)} disabled={viewZoom <= 1} title="Pan up" aria-label="Pan up">
+          <button type="button" onClick={() => panView(0, 1)} title="Pan up" aria-label="Pan up">
             <ArrowUp aria-hidden="true" />
           </button>
-          <button type="button" onClick={() => panView(0, -1)} disabled={viewZoom <= 1} title="Pan down" aria-label="Pan down">
+          <button type="button" onClick={() => panView(0, -1)} title="Pan down" aria-label="Pan down">
             <ArrowDown aria-hidden="true" />
           </button>
           <button type="button" onClick={() => setZoom(viewZoom / 1.5)} disabled={viewZoom <= 0.25} title="Zoom out" aria-label="Zoom out">
@@ -1736,18 +1729,6 @@ function PlanningEditor({
           }}
           onPointerCancel={() => setPanStart(null)}
         />
-        <div
-          className="axis-label axis-label-s"
-          style={pointOverlayStyle(padding.left, viewHeight - 18, viewWidth, viewHeight)}
-        >
-          s / mm
-        </div>
-        <div
-          className="axis-label axis-label-d"
-          style={pointOverlayStyle(12, padding.top + 8, viewWidth, viewHeight)}
-        >
-          d / mm
-        </div>
         {stockStartS >= minS && stockStartS <= maxS ? (
           <div
             className="datum-marker"
