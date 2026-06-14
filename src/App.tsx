@@ -90,7 +90,7 @@ type FeaturePosition = {
   end_s_mm: number;
 };
 type MoveDirection = "up" | "down";
-type InspectorMode = "project" | "library";
+type AppMode = "design" | "libraries";
 type LibraryTab = "machine" | "tools" | "materials" | "exchange";
 type ToolType = "v_cutter" | "cylindrical_cutter";
 
@@ -249,7 +249,7 @@ export function App() {
   const [measurementAnchors, setMeasurementAnchors] = useState<MeasurementAnchor[]>([]);
   const [undoStack, setUndoStack] = useState<LoadedProject[]>([]);
   const [redoStack, setRedoStack] = useState<LoadedProject[]>([]);
-  const [inspectorMode, setInspectorMode] = useState<InspectorMode>("project");
+  const [appMode, setAppMode] = useState<AppMode>("design");
   const [library, setLibrary] = useState<LibraryConfig>(defaultLibraryConfig);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>("machine");
   const [selectedMachineId, setSelectedMachineId] = useState(defaultMachineId);
@@ -329,7 +329,7 @@ export function App() {
   }, [library]);
 
   function selectProjectObject(objectId: string) {
-    setInspectorMode("project");
+    setAppMode("design");
     setSelectedObjectId(objectId);
   }
 
@@ -485,6 +485,7 @@ export function App() {
     setMeasurementAnchors([]);
     setUndoStack([]);
     setRedoStack([]);
+    setAppMode("design");
   }
 
   function updateProject(project: HobgoblinProject, statusMessage: string) {
@@ -594,7 +595,7 @@ export function App() {
             };
       setSelectedToolId(id);
       setLibraryTab("tools");
-      setInspectorMode("library");
+      setAppMode("libraries");
       setStatus(`Added ${tool.name}`);
       return { ...current, tools: [...current.tools, tool] };
     });
@@ -908,7 +909,7 @@ export function App() {
           <CommandGroup label="Inspect">
             <CommandButton icon={<CheckCircle2 aria-hidden="true" />} label="Validate" onClick={revalidate} disabled={!loaded} />
             <CommandButton icon={<Play aria-hidden="true" />} label="Preview" onClick={previewSchematic} disabled={!loaded} />
-            <CommandButton icon={<Database aria-hidden="true" />} label="Libraries" onClick={() => setInspectorMode("library")} />
+            <CommandButton icon={<Database aria-hidden="true" />} label="Libraries" onClick={() => setAppMode("libraries")} />
             <CommandButton icon={<ArrowLeft aria-hidden="true" />} label="Undo" onClick={undoProjectEdit} disabled={!loaded || undoStack.length === 0} />
             <CommandButton icon={<ArrowRight aria-hidden="true" />} label="Redo" onClick={redoProjectEdit} disabled={!loaded || redoStack.length === 0} />
             <CommandButton icon={<Wrench aria-hidden="true" />} label="Export" disabled title="G-code export shell is tracked separately" />
@@ -949,29 +950,16 @@ export function App() {
         </div>
       </header>
 
-      <section className="workspace">
-        <aside className="feature-tree" aria-label="Feature tree">
-          <PanelHeader title="Features" subtitle={loaded?.pathLabel ?? "No file"} />
-          {loaded ? (
-            <FeatureTree
-              project={loaded.project}
-              selectedObjectId={selectedObjectId}
-              diagnostics={loaded.validation.diagnostics}
-              onSelect={selectProjectObject}
-              onMoveStackItem={moveStackItem}
-              onMoveStackItemToIndex={moveStackItemToIndex}
-              onDeleteStackItem={deleteStackItem}
-              onDeletePlanningRegion={deletePlanningRegion}
-              onDeleteProtectedInterval={deleteProtectedInterval}
-            />
-          ) : (
-            <EmptyPanel message="Open a project file to inspect the shaft stack." />
-          )}
-        </aside>
-
-        <aside className="inspector" aria-label="Inspector">
-          <PanelHeader title={inspectorMode === "library" ? "Libraries" : "Inspector"} subtitle={inspectorMode === "library" ? libraryTab : selectedObjectId ?? "Nothing selected"} />
-          {inspectorMode === "library" ? (
+      {appMode === "libraries" ? (
+        <section className="workspace library-workspace" aria-label="Library editor">
+          <section className="library-screen">
+            <div className="library-screen-header">
+              <PanelHeader title="Libraries" subtitle="Machines, tools, materials, and import/export" />
+              <button type="button" onClick={() => setAppMode("design")}>
+                <ArrowLeft aria-hidden="true" />
+                Back to design
+              </button>
+            </div>
             <LibraryInspector
               library={library}
               tab={libraryTab}
@@ -991,7 +979,32 @@ export function App() {
               onExport={exportLibraryConfig}
               onImport={importLibraryConfig}
             />
-          ) : loaded && selectedFeature ? (
+          </section>
+        </section>
+      ) : (
+        <section className="workspace">
+          <aside className="feature-tree" aria-label="Feature tree">
+            <PanelHeader title="Features" subtitle={loaded?.pathLabel ?? "No file"} />
+            {loaded ? (
+              <FeatureTree
+                project={loaded.project}
+                selectedObjectId={selectedObjectId}
+                diagnostics={loaded.validation.diagnostics}
+                onSelect={selectProjectObject}
+                onMoveStackItem={moveStackItem}
+                onMoveStackItemToIndex={moveStackItemToIndex}
+                onDeleteStackItem={deleteStackItem}
+                onDeletePlanningRegion={deletePlanningRegion}
+                onDeleteProtectedInterval={deleteProtectedInterval}
+              />
+            ) : (
+              <EmptyPanel message="Open a project file to inspect the shaft stack." />
+            )}
+          </aside>
+
+          <aside className="inspector" aria-label="Inspector">
+            <PanelHeader title="Inspector" subtitle={selectedObjectId ?? "Nothing selected"} />
+            {loaded && selectedFeature ? (
             <FeatureInspector
               feature={selectedFeature}
               interval={selectedFeatureInterval}
@@ -1060,65 +1073,66 @@ export function App() {
           ) : (
             <EmptyPanel message="Select a feature or diagnostic to inspect its data." />
           )}
-        </aside>
+          </aside>
 
-        <section className="editor-plane" aria-label="Shaft schematic">
-          <PanelHeader
-            title="Shaft"
-            subtitle={
-              loaded
-                ? `${loaded.project.stock.diameter_mm.toFixed(2)} mm stock x ${loaded.project.stock.length_mm.toFixed(2)} mm`
-                : "Waiting for project"
-            }
-          />
-          {loaded ? (
-            <PlanningEditor
-              project={loaded.project}
-              selectedObjectId={selectedObjectId}
-              editorMode={editorMode}
-              measurementAnchors={measurementAnchors}
-              onSelect={selectProjectObject}
-              onMeasureAnchor={handleAnchor}
-              onResetMeasurement={resetMeasurement}
-              onMoveRegionVertex={(regionId, vertexIndex, point) =>
-                updatePlanningRegion(regionId, (region) => ({
-                  ...region,
-                  polygon: region.polygon.map((candidate, index) =>
-                    index === vertexIndex ? point : candidate,
-                  ),
-                }))
-              }
-              onAddRegionVertex={(regionId, edgeIndex, point) =>
-                updatePlanningRegion(regionId, (region) => {
-                  const polygon = [...region.polygon];
-                  polygon.splice(edgeIndex + 1, 0, point);
-                  return { ...region, polygon };
-                })
-              }
-              onDeleteRegionVertex={(regionId, vertexIndex) =>
-                updatePlanningRegion(regionId, (region) => {
-                  if (region.polygon.length <= 3) {
-                    setStatus("Planning polygons need at least three vertices");
-                    return region;
-                  }
-                  return {
-                    ...region,
-                    polygon: region.polygon.filter((_, index) => index !== vertexIndex),
-                  };
-                })
-              }
-              onResizeAxisAlignedRegion={(regionId, bounds) =>
-                updatePlanningRegion(regionId, (region) => ({
-                  ...region,
-                  polygon: rectanglePolygon(bounds),
-                }))
+          <section className="editor-plane" aria-label="Shaft schematic">
+            <PanelHeader
+              title="Shaft"
+              subtitle={
+                loaded
+                  ? `${loaded.project.stock.diameter_mm.toFixed(2)} mm stock x ${loaded.project.stock.length_mm.toFixed(2)} mm`
+                  : "Waiting for project"
               }
             />
-          ) : (
-            <EmptyPanel message="The shaft preview appears here after loading a project." />
-          )}
+            {loaded ? (
+              <PlanningEditor
+                project={loaded.project}
+                selectedObjectId={selectedObjectId}
+                editorMode={editorMode}
+                measurementAnchors={measurementAnchors}
+                onSelect={selectProjectObject}
+                onMeasureAnchor={handleAnchor}
+                onResetMeasurement={resetMeasurement}
+                onMoveRegionVertex={(regionId, vertexIndex, point) =>
+                  updatePlanningRegion(regionId, (region) => ({
+                    ...region,
+                    polygon: region.polygon.map((candidate, index) =>
+                      index === vertexIndex ? point : candidate,
+                    ),
+                  }))
+                }
+                onAddRegionVertex={(regionId, edgeIndex, point) =>
+                  updatePlanningRegion(regionId, (region) => {
+                    const polygon = [...region.polygon];
+                    polygon.splice(edgeIndex + 1, 0, point);
+                    return { ...region, polygon };
+                  })
+                }
+                onDeleteRegionVertex={(regionId, vertexIndex) =>
+                  updatePlanningRegion(regionId, (region) => {
+                    if (region.polygon.length <= 3) {
+                      setStatus("Planning polygons need at least three vertices");
+                      return region;
+                    }
+                    return {
+                      ...region,
+                      polygon: region.polygon.filter((_, index) => index !== vertexIndex),
+                    };
+                  })
+                }
+                onResizeAxisAlignedRegion={(regionId, bounds) =>
+                  updatePlanningRegion(regionId, (region) => ({
+                    ...region,
+                    polygon: rectanglePolygon(bounds),
+                  }))
+                }
+              />
+            ) : (
+              <EmptyPanel message="The shaft preview appears here after loading a project." />
+            )}
+          </section>
         </section>
-      </section>
+      )}
 
       <section className="diagnostics-panel" aria-label="Diagnostics">
         <div className="diagnostics-summary">
@@ -1131,7 +1145,7 @@ export function App() {
         <DiagnosticsList
           diagnostics={loaded?.validation.diagnostics ?? []}
           selectedObjectId={selectedObjectId}
-          onSelect={setSelectedObjectId}
+          onSelect={selectProjectObject}
         />
       </section>
     </main>

@@ -460,6 +460,64 @@ button {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.library-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.library-screen {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #f7faf4;
+}
+
+.library-screen-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-bottom: 1px solid #cad5cb;
+  background: linear-gradient(#fbfcf8, #eef4eb);
+}
+
+.library-screen-header .panel-header {
+  border-bottom: 0;
+}
+
+.library-screen-header button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 14px;
+  padding: 0 11px;
+  border: 1px solid #c7d1ca;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #273237;
+}
+
+.library-screen .inspector-content {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 760px);
+  align-content: start;
+  gap: 18px;
+  padding: 18px 22px;
+  background:
+    linear-gradient(90deg, rgba(61, 141, 107, 0.05), transparent 26px),
+    #f7faf4;
+}
+
+.library-screen .library-tabs {
+  align-self: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.library-screen .library-tabs + * {
+  min-width: 0;
+}
+
 .planning-editor {
   min-height: 0;
   display: grid;

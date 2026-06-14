@@ -390,18 +390,20 @@ try {
   await page.getByText("0 errors, 0 warnings").waitFor();
 
   await ribbon.getByRole("button", { name: "Libraries", exact: true }).click();
-  await page.locator(".inspector").getByRole("button", { name: "Tools", exact: true }).click();
-  await page.locator(".inspector").getByLabel("Tool").selectOption("tool.v.60deg.3mm_flat");
-  await page.locator(".inspector").getByLabel("Name").fill("60 degree V cutter, smoke edited");
+  const libraryScreen = page.locator(".library-screen");
+  await libraryScreen.getByRole("button", { name: "Tools", exact: true }).click();
+  await libraryScreen.getByLabel("Tool").selectOption("tool.v.60deg.3mm_flat");
+  await libraryScreen.getByLabel("Name").fill("60 degree V cutter, smoke edited");
   assert(
-    (await page.locator(".inspector").getByLabel("Name").inputValue()) === "60 degree V cutter, smoke edited",
+    (await libraryScreen.getByLabel("Name").inputValue()) === "60 degree V cutter, smoke edited",
     "expected tool library name edit to update the typed form",
   );
   await page.getByRole("button", { name: "Add cylindrical", exact: true }).click();
   assert(
-    (await page.locator(".inspector").getByLabel("Name").inputValue()) === "Manual cylindrical cutter",
+    (await libraryScreen.getByLabel("Name").inputValue()) === "Manual cylindrical cutter",
     "expected added cylindrical tool to become selected in the library editor",
   );
+  await libraryScreen.getByRole("button", { name: "Back to design", exact: true }).click();
   await page.locator(".feature-tree").getByText("Right journal").click();
   await expectInspectorSubtitle("feature.right_journal");
   await page.locator("fieldset", { hasText: "Machining tools" }).getByLabel("Roughing tool").selectOption("tool.endmill.manual");
@@ -411,11 +413,12 @@ try {
     }
   });
   await ribbon.getByRole("button", { name: "Libraries", exact: true }).click();
-  await page.locator(".inspector").getByRole("button", { name: "Import/export", exact: true }).click();
+  await libraryScreen.getByRole("button", { name: "Import/export", exact: true }).click();
   await page.getByRole("button", { name: "Refresh export", exact: true }).click();
-  const libraryJson = await page.locator(".inspector").getByLabel("Library JSON").inputValue();
+  const libraryJson = await libraryScreen.getByLabel("Library JSON").inputValue();
   assert(libraryJson.includes("tool.endmill.manual"), "expected exported library JSON to include the added tool");
 
+  await libraryScreen.getByRole("button", { name: "Back to design", exact: true }).click();
   await page.locator(".feature-tree").getByText("Single Carvera setup").click();
   await expectInspectorSubtitle("setup.single_carvera");
   const workholdingFields = page.locator("fieldset", { hasText: "Workholding" });
