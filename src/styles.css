@@ -1024,6 +1024,61 @@ button {
   padding: 10px 14px;
 }
 
+.toolpath-summary {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid #e1e6df;
+  background: #f7faf4;
+}
+
+.toolpath-summary > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  color: #273237;
+  font-size: 13px;
+}
+
+.toolpath-summary span,
+.toolpath-summary small {
+  color: #68777c;
+  font-size: 12px;
+}
+
+.toolpath-grid,
+.toolpath-paths,
+.toolpath-diagnostics {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.toolpath-grid button,
+.toolpath-paths button,
+.toolpath-diagnostics button {
+  min-width: 210px;
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  border: 1px solid #d8dfd6;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #253035;
+  text-align: left;
+}
+
+.toolpath-grid strong,
+.toolpath-paths strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .diagnostic {
   min-height: 78px;
   display: grid;

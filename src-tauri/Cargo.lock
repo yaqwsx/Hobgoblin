@@ -1218,10 +1218,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "hobgoblin-gear"
+version = "0.1.0"
+dependencies = [
+ "hobgoblin-core",
+ "serde",
+]
+
+[[package]]
+name = "hobgoblin-planner"
+version = "0.1.0"
+dependencies = [
+ "hobgoblin-core",
+ "hobgoblin-gear",
+ "hobgoblin-post",
+ "serde",
+]
+
+[[package]]
+name = "hobgoblin-post"
+version = "0.1.0"
+dependencies = [
+ "hobgoblin-core",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "hobgoblin-tauri"
 version = "0.1.0"
 dependencies = [
  "hobgoblin-core",
+ "hobgoblin-planner",
+ "hobgoblin-post",
  "serde",
  "serde_json",
  "tauri",

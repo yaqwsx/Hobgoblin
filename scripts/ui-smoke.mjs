@@ -146,6 +146,7 @@ try {
     "Protect",
     "Validate",
     "Preview",
+    "Paths",
     "Undo",
     "Redo",
     "Export",
@@ -246,6 +247,34 @@ try {
   );
   assert((await page.locator(".shaft-axis").count()) === 1, "expected preview to render a central shaft axis");
   assert((await page.locator(".gear-teeth").count()) >= 2, "expected gears to render visible teeth on both sides of the shaft");
+  const canvasStatsBeforePaths = webglStats;
+  await ribbon.getByRole("button", { name: "Paths", exact: true }).click();
+  await page.locator(".toolpath-summary").getByText("Toolpaths").waitFor();
+  await page.locator(".toolpath-summary").getByText(/moves/).waitFor();
+  await page.locator(".toolpath-summary").getByText(/Browser mode shows synthetic path preview data/).waitFor();
+  await page.getByText(/Toolpath generation reported 1 diagnostic/).waitFor();
+  const canvasStatsAfterPaths = await page.locator("canvas.planning-webgl-canvas").evaluate((canvas) => {
+    const gl = canvas.getContext("webgl");
+    if (!gl) {
+      return { redCutPixels: 0 };
+    }
+    const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+    gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let redCutPixels = 0;
+    for (let index = 0; index < pixels.length; index += 16) {
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      if (r > 145 && g < 95 && b < 85) {
+        redCutPixels += 1;
+      }
+    }
+    return { redCutPixels };
+  });
+  assert(
+    canvasStatsAfterPaths.redCutPixels > 20,
+    `expected generated toolpath overlay to render red cutting pixels, got ${canvasStatsAfterPaths.redCutPixels}; before stats had ${canvasStatsBeforePaths.distinctColors} colors`,
+  );
   const stockBoxBeforeNavigation = await page.locator(".stock-rect").boundingBox();
   const shaftAxisBox = await page.locator(".shaft-axis").boundingBox();
   const viewportBackgroundBoxBeforeNavigation = await page.locator(".viewport-background").boundingBox();

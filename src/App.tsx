@@ -60,12 +60,17 @@ import {
   type StackItemType,
 } from "./projectMutations";
 import {
+  generateToolpathsFromSource,
   isTauriRuntime,
   loadProjectFromPath,
   pickProjectOpenPath,
   pickProjectSavePath,
   saveProjectToPath,
   validateProjectSource,
+  type AbstractMove,
+  type GeneratedToolpath,
+  type OperationSummary,
+  type ToolpathGenerationResponse,
   type ValidationDiagnostic,
   type ValidationResponse,
 } from "./tauri";
@@ -250,6 +255,7 @@ export function App() {
   const [undoStack, setUndoStack] = useState<LoadedProject[]>([]);
   const [redoStack, setRedoStack] = useState<LoadedProject[]>([]);
   const [appMode, setAppMode] = useState<AppMode>("design");
+  const [toolpathResult, setToolpathResult] = useState<ToolpathGenerationResponse | null>(null);
   const [library, setLibrary] = useState<LibraryConfig>(defaultLibraryConfig);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>("machine");
   const [selectedMachineId, setSelectedMachineId] = useState(defaultMachineId);
@@ -451,6 +457,32 @@ export function App() {
     setStatus(`Preview ready: ${loaded.project.stack.length} stack items, ${(loaded.project.planning_regions ?? []).length} planning regions`);
   }
 
+  async function generateToolpaths() {
+    if (!loaded) {
+      setStatus("No project is loaded");
+      return;
+    }
+    try {
+      const usingRustPlanner = isTauriRuntime();
+      const result = usingRustPlanner
+        ? await generateToolpathsFromSource(loaded.source)
+        : generateBrowserToolpathPreview(loaded.project);
+      setToolpathResult(result);
+      const diagnosticCount = result.diagnostics.length;
+      const pathMoveCount = result.paths.reduce((sum, path) => sum + path.path.path.moves.length, 0);
+      setStatus(
+        diagnosticCount > 0
+          ? `Toolpath generation reported ${diagnosticCount} diagnostic${diagnosticCount === 1 ? "" : "s"}`
+          : usingRustPlanner
+            ? `Generated ${result.paths.length} path${result.paths.length === 1 ? "" : "s"} with ${pathMoveCount} abstract moves`
+            : `Browser preview generated ${result.paths.length} fallback path${result.paths.length === 1 ? "" : "s"} with ${pathMoveCount} abstract moves; desktop uses the Rust planner`,
+      );
+    } catch (error) {
+      setToolpathResult(null);
+      setStatus(`Toolpath generation failed: ${errorMessage(error)}`);
+    }
+  }
+
   async function validateSource(source: string) {
     const validation = isTauriRuntime() ? await validateProjectSource(source) : validateProjectInBrowser(source);
     return appendLibraryDiagnostics(source, validation);
@@ -486,6 +518,7 @@ export function App() {
     setUndoStack([]);
     setRedoStack([]);
     setAppMode("design");
+    setToolpathResult(null);
   }
 
   function updateProject(project: HobgoblinProject, statusMessage: string) {
@@ -514,6 +547,7 @@ export function App() {
       });
     }
     setStatus(statusMessage);
+    setToolpathResult(null);
     if (isDesktopRuntime) {
       void validateProjectSource(source)
         .then((nextValidation) => {
@@ -909,6 +943,7 @@ export function App() {
           <CommandGroup label="Inspect">
             <CommandButton icon={<CheckCircle2 aria-hidden="true" />} label="Validate" onClick={revalidate} disabled={!loaded} />
             <CommandButton icon={<Play aria-hidden="true" />} label="Preview" onClick={previewSchematic} disabled={!loaded} />
+            <CommandButton icon={<Play aria-hidden="true" />} label="Paths" onClick={generateToolpaths} disabled={!loaded} />
             <CommandButton icon={<Database aria-hidden="true" />} label="Libraries" onClick={() => setAppMode("libraries")} />
             <CommandButton icon={<ArrowLeft aria-hidden="true" />} label="Undo" onClick={undoProjectEdit} disabled={!loaded || undoStack.length === 0} />
             <CommandButton icon={<ArrowRight aria-hidden="true" />} label="Redo" onClick={redoProjectEdit} disabled={!loaded || redoStack.length === 0} />
@@ -1090,6 +1125,7 @@ export function App() {
                 selectedObjectId={selectedObjectId}
                 editorMode={editorMode}
                 measurementAnchors={measurementAnchors}
+                toolpaths={toolpathResult?.paths ?? []}
                 onSelect={selectProjectObject}
                 onMeasureAnchor={handleAnchor}
                 onResetMeasurement={resetMeasurement}
@@ -1147,6 +1183,7 @@ export function App() {
           selectedObjectId={selectedObjectId}
           onSelect={selectProjectObject}
         />
+        {toolpathResult ? <ToolpathSummary result={toolpathResult} onSelect={selectProjectObject} /> : null}
       </section>
     </main>
   );
@@ -1385,6 +1422,7 @@ function PlanningEditor({
   selectedObjectId,
   editorMode,
   measurementAnchors,
+  toolpaths,
   onSelect,
   onMeasureAnchor,
   onResetMeasurement,
@@ -1397,6 +1435,7 @@ function PlanningEditor({
   selectedObjectId: string | null;
   editorMode: EditorMode;
   measurementAnchors: MeasurementAnchor[];
+  toolpaths: GeneratedToolpath[];
   onSelect: (objectId: string) => void;
   onMeasureAnchor: (anchor: MeasurementAnchor) => void;
   onResetMeasurement: () => void;
@@ -1627,6 +1666,7 @@ function PlanningEditor({
       moduleForItem,
       gridMinorS,
       gridMinorD,
+      toolpaths,
     });
   }, [
     viewZoom,
@@ -1643,6 +1683,7 @@ function PlanningEditor({
     maxR,
     gridMinorS,
     gridMinorD,
+    toolpaths,
   ]);
 
   return (
@@ -2105,6 +2146,7 @@ function renderPlanningWebgl(
     moduleForItem: (item: StackItem) => number;
     gridMinorS: number;
     gridMinorD: number;
+    toolpaths: GeneratedToolpath[];
   },
 ) {
   const gl = canvas.getContext("webgl", { antialias: true, alpha: false, preserveDrawingBuffer: true });
@@ -2334,6 +2376,40 @@ function renderPlanningWebgl(
       for (const side of [1, -1] as const) {
         draw(toothVertices(xStart, xEnd, radius, rootRadius, side), toothColor);
       }
+    }
+  }
+
+  for (const generated of context.toolpaths) {
+    const span = context.spans.find((candidate) => candidate.item.id === generated.feature_id);
+    if (!span) {
+      continue;
+    }
+    const featureRadius = radiusForItem(span.item);
+    let previous: { x: number | null; r: number | null } = { x: null, r: null };
+    for (const move of generated.path.path.moves) {
+      const x = typeof move.x_mm === "number" ? move.x_mm : previous.x;
+      const z = typeof move.z_mm === "number" ? move.z_mm : null;
+      const r = z === null ? previous.r : Math.max(0, featureRadius + z);
+      const cutting = move.type === "linear_cut";
+      if (cutting && previous.x !== null && previous.r !== null && x !== null && r !== null) {
+        drawStroke(
+          [
+            [context.xForS(previous.x), context.yForR(previous.r)],
+            [context.xForS(x), context.yForR(r)],
+          ],
+          [0.78, 0.23, 0.15, 0.9],
+          2,
+        );
+        drawStroke(
+          [
+            [context.xForS(previous.x), context.yForR(-previous.r)],
+            [context.xForS(x), context.yForR(-r)],
+          ],
+          [0.78, 0.23, 0.15, 0.55],
+          1.5,
+        );
+      }
+      previous = { x, r };
     }
   }
 
@@ -3292,6 +3368,98 @@ function libraryDiagnostics(project: HobgoblinProject, library: LibraryConfig): 
   return diagnostics;
 }
 
+function generateBrowserToolpathPreview(project: HobgoblinProject): ToolpathGenerationResponse {
+  const spans = stackSpans(project);
+  const operations: OperationSummary[] = [];
+  for (const region of project.planning_regions ?? []) {
+    operations.push({
+      id: `op.region.${region.id}.${region.purpose}`,
+      feature_id: null,
+      region_id: region.id,
+      kind: `${region.purpose}_region`,
+      stage: region.stage,
+    });
+  }
+  for (const span of spans) {
+    operations.push({
+      id: `op.feature.${span.item.id}.${isGearStackItem(span.item) ? "generated_shaping" : "finish"}`,
+      feature_id: span.item.id,
+      region_id: null,
+      kind: isGearStackItem(span.item) ? "browser_spur_shaping_preview" : "cylindrical_finish_surface",
+      stage: isGearStackItem(span.item) ? 120 : 100,
+    });
+  }
+  const spurSpan = spans.find((span) => span.item.type === "spur_gear");
+  if (!spurSpan) {
+    return {
+      diagnostics: [{
+        severity: "warning",
+        object_id: project.project.id,
+        message: "Browser preview generation currently needs a spur gear feature",
+      }],
+      operations,
+      paths: [],
+    };
+  }
+
+  const radius = radiusForItem(spurSpan.item);
+  const moves: AbstractMove[] = [];
+  const layerDepths = [0.25, 0.5, 0.75, 1.0];
+  const previewStepCount = Math.max(8, Math.min(32, toothCountForStackItem(spurSpan.item)));
+  for (const [layerIndex, depth] of layerDepths.entries()) {
+    for (let step = 0; step < previewStepCount; step += 1) {
+      const ratio = step / Math.max(1, previewStepCount - 1);
+      const rackY = (ratio - 0.5) * Math.max(2, radius * 0.8);
+      const aDeg = ratio * 360;
+      const zMm = -depth;
+      moves.push(
+        { type: "rapid", x_mm: spurSpan.startS - 1, y_mm: rackY, z_mm: 5, a_deg: aDeg },
+        { type: "rapid", x_mm: spurSpan.startS - 1, y_mm: rackY, z_mm: zMm, a_deg: aDeg },
+        {
+          type: "linear_cut",
+          x_mm: spurSpan.endS + 1,
+          y_mm: rackY,
+          z_mm: zMm,
+          a_deg: aDeg,
+          feed_mm_min: 100 + layerIndex * 20,
+        },
+        { type: "rapid", x_mm: spurSpan.endS + 1, y_mm: rackY, z_mm: 5, a_deg: aDeg },
+      );
+    }
+  }
+  return {
+    diagnostics: [{
+      severity: "warning",
+      object_id: spurSpan.item.id,
+      message: "Browser mode shows synthetic path preview data; run the Tauri desktop shell to generate paths with the Rust planner",
+    }],
+    operations,
+    paths: [{
+      feature_id: spurSpan.item.id,
+      path: {
+        path: {
+          id: `path.${spurSpan.item.id}.browser_preview`,
+          operation_id: `op.feature.${spurSpan.item.id}.browser_preview`,
+          moves,
+        },
+        debug_steps: [],
+        adaptive_rack_stepping: { source: "browser_preview" },
+      },
+    }],
+  };
+}
+
+function isGearStackItem(item: StackItem) {
+  return item.type === "spur_gear" || item.type === "helical_gear" || item.type === "herringbone_gear";
+}
+
+function toothCountForStackItem(item: StackItem): number {
+  const direct = typeof item.tooth_count === "number" ? item.tooth_count : null;
+  const spur = typeof item.spur === "object" && item.spur !== null ? (item.spur as Record<string, unknown>) : null;
+  const nested = typeof spur?.tooth_count === "number" ? spur.tooth_count : null;
+  return Math.max(6, Math.min(48, Math.round(direct ?? nested ?? 18)));
+}
+
 function toolIdsForStackItem(item: StackItem): string[] {
   const ids = new Set<string>();
   collectToolIds(item, ids);
@@ -3432,6 +3600,57 @@ function DiagnosticsList({
           <p>{diagnostic.message}</p>
         </button>
       ))}
+    </div>
+  );
+}
+
+function ToolpathSummary({
+  result,
+  onSelect,
+}: {
+  result: ToolpathGenerationResponse;
+  onSelect: (objectId: string) => void;
+}) {
+  return (
+    <div className="toolpath-summary" aria-label="Generated toolpaths">
+      <div>
+        <strong>Toolpaths</strong>
+        <span>{result.operations.length} operations / {result.paths.length} paths</span>
+      </div>
+      {result.diagnostics.length > 0 ? (
+        <div className="toolpath-diagnostics">
+          {result.diagnostics.map((diagnostic, index) => (
+            <button
+              type="button"
+              key={`${diagnostic.message}-${index}`}
+              onClick={() => diagnostic.object_id && onSelect(diagnostic.object_id)}
+            >
+              {diagnostic.severity}: {diagnostic.message}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="toolpath-grid">
+        {result.operations.slice(0, 6).map((operation) => (
+          <button
+            type="button"
+            key={operation.id}
+            onClick={() => operation.feature_id && onSelect(operation.feature_id)}
+          >
+            <span>{operation.kind}</span>
+            <strong>{operation.id}</strong>
+            <small>stage {operation.stage}</small>
+          </button>
+        ))}
+      </div>
+      <div className="toolpath-paths">
+        {result.paths.map((path) => (
+          <button type="button" key={path.path.path.id} onClick={() => onSelect(path.feature_id)}>
+            <strong>{path.path.path.id}</strong>
+            <span>{path.path.path.moves.length} moves</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
