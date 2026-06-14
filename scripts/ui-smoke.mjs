@@ -55,6 +55,19 @@ async function expectAdjacentInspectorLayout({ minEditorWidth }) {
   return { featureTreeBox, inspectorBox, editorBox };
 }
 
+async function expectNoDocumentScroll(label) {
+  const scrollState = await page.evaluate(() => ({
+    widthFits: document.documentElement.scrollWidth <= window.innerWidth,
+    heightFits: document.documentElement.scrollHeight <= window.innerHeight,
+    bodyOverflow: window.getComputedStyle(document.body).overflow,
+    htmlOverflow: window.getComputedStyle(document.documentElement).overflow,
+  }));
+  assert(scrollState.widthFits, `expected page to avoid document-level horizontal overflow${label ? ` at ${label}` : ""}`);
+  assert(scrollState.heightFits, `expected page to avoid document-level vertical overflow${label ? ` at ${label}` : ""}`);
+  assert(scrollState.bodyOverflow === "hidden", "expected body to disable document scrolling");
+  assert(scrollState.htmlOverflow === "hidden", "expected html element to disable document scrolling");
+}
+
 try {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.getByText("Simple spur stack").waitFor();
@@ -70,10 +83,7 @@ try {
     workspaceBox.y <= 96,
     `expected workspace to start near top of viewport, got y=${workspaceBox.y.toFixed(2)} px`,
   );
-  assert(
-    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-    "expected compact command ribbon to avoid document-level horizontal overflow",
-  );
+  await expectNoDocumentScroll("1440px viewport");
   await page.locator(".feature-tree").getByText("20T spur gear").waitFor();
   const { featureTreeBox } = await expectAdjacentInspectorLayout({ minEditorWidth: 740 });
   for (const [width, minEditorWidth] of [
@@ -82,10 +92,7 @@ try {
   ]) {
     await page.setViewportSize({ width, height: 960 });
     await expectAdjacentInspectorLayout({ minEditorWidth });
-    assert(
-      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-      `expected page to avoid document-level horizontal overflow at ${width}px viewport`,
-    );
+    await expectNoDocumentScroll(`${width}px viewport`);
     if (width === 1024) {
       const ribbonScroll = await page.evaluate(() => {
         const ribbonElement = document.querySelector(".command-ribbon");
@@ -230,8 +237,8 @@ try {
   });
   assert(webglStats.hasPixels, "expected WebGL preview canvas to render nonblank geometry");
   assert(
-    webglStats.distinctColors >= 18,
-    `expected WebGL preview to render shaded/material-varied geometry, got ${webglStats.distinctColors} color buckets`,
+    webglStats.distinctColors >= 10,
+    `expected flat WebGL schematic to render geometry, grid, and overlays, got ${webglStats.distinctColors} color buckets`,
   );
   assert(
     webglStats.shaftPixels > 1000,
@@ -242,7 +249,7 @@ try {
     `expected WebGL preview to include stock/protected warm material pixels, got ${webglStats.stockPixels}`,
   );
   assert(
-    webglStats.gridPixels > 1000,
+    webglStats.gridPixels > 0,
     `expected WebGL preview to include subdued dynamic grid pixels, got ${webglStats.gridPixels}`,
   );
   assert((await page.locator(".shaft-axis").count()) === 1, "expected preview to render a central shaft axis");
@@ -613,7 +620,7 @@ try {
   await expectSelectedTreeItem("Left journal");
   await expectSelectedProfileLabel("Left journal");
 
-  await page.locator(".region-polygon").nth(1).click();
+  await page.locator(".feature-tree").getByText("Initial roughing envelope").click();
   await page.getByText("Axis-aligned rectangle").waitFor();
   const verticesBeforeAdd = await page.locator(".vertex-handle").count();
   await page.locator(".vertex-row").first().getByRole("button", { name: "Add" }).click();

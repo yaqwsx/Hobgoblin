@@ -1511,27 +1511,33 @@ function PlanningEditor({
     ...planningRegions.flatMap((region) => region.polygon.map((point) => point.s_mm)),
   );
   const domainRangeS = Math.max(1, domainMaxS - domainMinS);
-  const visibleRangeS = domainRangeS / viewZoom;
+  const requestedVisibleRangeS = domainRangeS / viewZoom;
   const domainCenterS = (domainMinS + domainMaxS) / 2;
-  const visibleCenterS = domainCenterS + viewCenterOffsetS;
-  const minS = visibleCenterS - visibleRangeS / 2;
-  const maxS = visibleCenterS + visibleRangeS / 2;
-  const sRange = Math.max(1, maxS - minS);
   const maxProfileRadiusWithMargin = Math.max(1, maxProfileRadius) * 1.12;
   const domainMinR = -maxProfileRadiusWithMargin;
   const domainMaxR = maxProfileRadiusWithMargin;
   const domainRangeR = domainMaxR - domainMinR;
-  const visibleRangeR = domainRangeR / viewZoom;
+  const requestedVisibleRangeR = domainRangeR / viewZoom;
   const domainCenterR = (domainMinR + domainMaxR) / 2;
-  const visibleCenterR = domainCenterR + viewCenterOffsetR;
-  const minR = visibleCenterR - visibleRangeR / 2;
-  const maxR = visibleCenterR + visibleRangeR / 2;
-  const rRange = Math.max(1, maxR - minR);
   const viewWidth = 1000;
   const viewHeight = 420;
   const padding = { left: 0, right: 0, top: 0, bottom: 0 };
   const plotWidth = viewWidth - padding.left - padding.right;
   const plotHeight = viewHeight - padding.top - padding.bottom;
+  const modelUnitsPerPixel = Math.max(
+    requestedVisibleRangeS / Math.max(1, plotWidth),
+    requestedVisibleRangeR / Math.max(1, plotHeight),
+  );
+  const visibleRangeS = Math.max(1, modelUnitsPerPixel * plotWidth);
+  const visibleRangeR = Math.max(1, modelUnitsPerPixel * plotHeight);
+  const visibleCenterS = domainCenterS + viewCenterOffsetS;
+  const visibleCenterR = domainCenterR + viewCenterOffsetR;
+  const minS = visibleCenterS - visibleRangeS / 2;
+  const maxS = visibleCenterS + visibleRangeS / 2;
+  const sRange = Math.max(1, maxS - minS);
+  const minR = visibleCenterR - visibleRangeR / 2;
+  const maxR = visibleCenterR + visibleRangeR / 2;
+  const rRange = Math.max(1, maxR - minR);
   const gridMinorS = niceGridStep(sRange, plotWidth, 36);
   const gridMinorD = niceGridStep(rRange * 2, plotHeight, 36);
 
@@ -1539,13 +1545,25 @@ function PlanningEditor({
   const yForR = (rMm: number) => padding.top + (1 - (rMm - minR) / rRange) * plotHeight;
   const sForX = (x: number) => minS + ((x - padding.left) / plotWidth) * sRange;
   const rForY = (y: number) => minR + (1 - (y - padding.top) / plotHeight) * rRange;
+  const visibleRangesForZoom = (zoom: number) => {
+    const requestedRangeS = domainRangeS / zoom;
+    const requestedRangeR = domainRangeR / zoom;
+    const unitsPerPixel = Math.max(
+      requestedRangeS / Math.max(1, plotWidth),
+      requestedRangeR / Math.max(1, plotHeight),
+    );
+    return {
+      rangeS: Math.max(1, unitsPerPixel * plotWidth),
+      rangeR: Math.max(1, unitsPerPixel * plotHeight),
+    };
+  };
   const clampCenterOffsetS = (offsetS: number, zoom = viewZoom) => {
-    const nextVisibleRangeS = domainRangeS / zoom;
+    const nextVisibleRangeS = visibleRangesForZoom(zoom).rangeS;
     const maxOffset = Math.max(domainRangeS, nextVisibleRangeS);
     return Math.min(maxOffset, Math.max(-maxOffset, offsetS));
   };
   const clampCenterOffsetR = (offsetR: number, zoom = viewZoom) => {
-    const nextVisibleRangeR = domainRangeR / zoom;
+    const nextVisibleRangeR = visibleRangesForZoom(zoom).rangeR;
     const maxOffset = Math.max(domainRangeR, nextVisibleRangeR);
     return Math.min(maxOffset, Math.max(-maxOffset, offsetR));
   };
@@ -1639,8 +1657,7 @@ function PlanningEditor({
     const cursorRatioY = Math.min(1, Math.max(0, (y - padding.top) / plotHeight));
     const cursorS = sForX(x);
     const cursorR = rForY(y);
-    const nextVisibleRangeS = domainRangeS / clampedZoom;
-    const nextVisibleRangeR = domainRangeR / clampedZoom;
+    const { rangeS: nextVisibleRangeS, rangeR: nextVisibleRangeR } = visibleRangesForZoom(clampedZoom);
     const nextCenterS = cursorS + (0.5 - cursorRatio) * nextVisibleRangeS;
     const nextCenterR = cursorR + (cursorRatioY - 0.5) * nextVisibleRangeR;
     setViewZoom(clampedZoom);
@@ -2245,18 +2262,6 @@ function renderPlanningWebgl(
   const lineRect = (x: number, y: number, width: number, height: number, color: [number, number, number, number]) => {
     draw(rectVertices(x, y, width, height), color);
   };
-  const shadedRect = (
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    colors: Array<[number, number, number, number]>,
-  ) => {
-    const bands = colors.length;
-    for (let index = 0; index < bands; index += 1) {
-      lineRect(x, y + (height * index) / bands, width, height / bands + 0.5, colors[index]);
-    }
-  };
   const polygonVertices = (points: Array<[number, number]>) => {
     if (points.length < 3) {
       return [];
@@ -2349,13 +2354,7 @@ function renderPlanningWebgl(
   const stockRect = context.rectForRadius(context.stockRadius);
   const stockX = context.xForS(context.stockStartS);
   const stockWidth = context.xForS(context.stockEndS) - context.xForS(context.stockStartS);
-  shadedRect(stockX, stockRect.y, stockWidth, stockRect.height, [
-    [0.96, 0.89, 0.75, 1],
-    [0.9, 0.71, 0.42, 1],
-    [0.77, 0.54, 0.25, 1],
-    [0.9, 0.71, 0.42, 1],
-    [0.98, 0.93, 0.82, 1],
-  ]);
+  lineRect(stockX, stockRect.y, stockWidth, stockRect.height, [0.9, 0.72, 0.46, 1]);
   drawStroke([
     [stockX, stockRect.y],
     [stockX + stockWidth, stockRect.y],
@@ -2373,22 +2372,13 @@ function renderPlanningWebgl(
     const featureRect = context.rectForRadius(rootRadius);
     const xStart = context.xForS(span.startS);
     const xEnd = context.xForS(span.endS);
-    const colorBands: Array<[number, number, number, number]> = gearFeature
-      ? [
-          [0.78, 0.88, 0.84, 1],
-          [0.58, 0.75, 0.69, 1],
-          [0.39, 0.58, 0.53, 1],
-          [0.58, 0.75, 0.69, 1],
-          [0.85, 0.93, 0.9, 1],
-        ]
-      : [
-          [0.88, 0.94, 0.92, 1],
-          [0.7, 0.82, 0.79, 1],
-          [0.5, 0.65, 0.62, 1],
-          [0.7, 0.82, 0.79, 1],
-          [0.93, 0.97, 0.95, 1],
-        ];
-    shadedRect(xStart, featureRect.y, xEnd - xStart, featureRect.height, colorBands);
+    lineRect(
+      xStart,
+      featureRect.y,
+      xEnd - xStart,
+      featureRect.height,
+      gearFeature ? [0.62, 0.78, 0.72, 1] : [0.72, 0.82, 0.79, 1],
+    );
     const outlineColor: [number, number, number, number] = span.item.id === context.selectedObjectId
       ? [0.17, 0.44, 0.33, 1]
       : gearFeature
