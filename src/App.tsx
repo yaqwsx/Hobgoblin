@@ -1527,6 +1527,23 @@ function PlanningEditor({
     return clampPoint({ s_mm: sForX(x), r_mm: rForY(y) });
   }
 
+  function snapRegionVertex(region: PlanningRegion, vertexIndex: number, point: PointSr): PointSr {
+    const snapS = (sRange / Math.max(1, plotWidth)) * 10;
+    const snapR = (rRange / Math.max(1, plotHeight)) * 10;
+    const previous = region.polygon[(vertexIndex - 1 + region.polygon.length) % region.polygon.length];
+    const next = region.polygon[(vertexIndex + 1) % region.polygon.length];
+    const sCandidates = [previous.s_mm, next.s_mm]
+      .map((value) => ({ value, distance: Math.abs(point.s_mm - value) }))
+      .sort((a, b) => a.distance - b.distance);
+    const rCandidates = [previous.r_mm, next.r_mm]
+      .map((value) => ({ value, distance: Math.abs(point.r_mm - value) }))
+      .sort((a, b) => a.distance - b.distance);
+    return {
+      s_mm: sCandidates[0].distance <= snapS ? sCandidates[0].value : point.s_mm,
+      r_mm: rCandidates[0].distance <= snapR ? rCandidates[0].value : point.r_mm,
+    };
+  }
+
   function zoomToClientPoint(clientX: number, clientY: number, nextZoom: number) {
     const clampedZoom = Math.min(8, Math.max(0.25, nextZoom));
     if (clampedZoom === viewZoom) {
@@ -1890,7 +1907,9 @@ function PlanningEditor({
                   viewWidth={viewWidth}
                   viewHeight={viewHeight}
                   onSelect={onSelect}
-                  onMove={onMoveRegionVertex}
+                  onMove={(regionId, vertexIndex, point) =>
+                    onMoveRegionVertex(regionId, vertexIndex, snapRegionVertex(region, vertexIndex, point))
+                  }
                   onDelete={onDeleteRegionVertex}
                   onMeasureAnchor={onMeasureAnchor}
                 />
@@ -1905,10 +1924,19 @@ function PlanningEditor({
                   <button
                     type="button"
                     key={`${region.id}-edge-${edgeIndex}`}
-                    aria-label={`Add vertex after ${region.name} edge ${edgeIndex + 1}`}
-                    style={handleStyle(xForS(midpoint.s_mm), yForR(midpoint.r_mm), 10, viewWidth, viewHeight)}
+                    aria-label={`Add vertex on ${region.name} edge ${edgeIndex + 1}`}
+                    title="Double-click to add a polygon vertex"
+                    style={lineOverlayStyle(
+                      xForS(point.s_mm),
+                      yForR(point.r_mm),
+                      xForS(next.s_mm),
+                      yForR(next.r_mm),
+                      viewWidth,
+                      viewHeight,
+                    )}
                     className="edge-add-handle"
-                    onClick={() => {
+                    onClick={() => onSelect(region.id)}
+                    onDoubleClick={() => {
                       onSelect(region.id);
                       onAddRegionVertex(region.id, edgeIndex, midpoint);
                     }}
@@ -2335,8 +2363,9 @@ function RegionVertexHandle({
     <button
       type="button"
       aria-label={`${region.name} vertex ${vertexIndex + 1}`}
+      title={region.polygon.length <= 3 ? "Planning polygons need at least three vertices" : "Double-click to remove this polygon vertex"}
       style={handleStyle(xForS(point.s_mm), yForR(point.r_mm), 14, viewWidth, viewHeight)}
-      className="vertex-handle"
+      className={region.polygon.length <= 3 ? "vertex-handle locked" : "vertex-handle"}
       onClick={() => {
         onSelect(region.id);
         onMeasureAnchor({
@@ -2345,7 +2374,11 @@ function RegionVertexHandle({
           point,
         });
       }}
-      onDoubleClick={() => onDelete(region.id, vertexIndex)}
+      onDoubleClick={() => {
+        if (region.polygon.length > 3) {
+          onDelete(region.id, vertexIndex);
+        }
+      }}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
         onSelect(region.id);

@@ -697,18 +697,31 @@ button {
 }
 
 .vertex-handle {
+  z-index: 7;
   border: 2px solid #2c6f55;
   border-radius: 999px;
   background: #ffffff;
 }
 
+.vertex-handle.locked {
+  border-color: #8a9793;
+}
+
 .edge-add-handle {
-  border: 1.5px solid #ffffff;
+  height: 14px;
+  margin-top: -7px;
+  border: 0;
   border-radius: 999px;
-  background: #233033;
+  background: transparent;
+  transform-origin: left center;
+}
+
+.edge-add-handle:hover {
+  background: rgba(35, 48, 51, 0.16);
 }
 
 .axis-handle {
+  z-index: 7;
   border: 1.5px solid #224f43;
   border-radius: 2px;
   background: #7ec4a5;

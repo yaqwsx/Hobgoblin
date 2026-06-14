@@ -361,6 +361,14 @@ try {
     regionCount >= 2 && vertexCount >= 8 && axisHandleCount >= 8,
     `expected planning polygons and handles, got regions=${regionCount} vertices=${vertexCount} axisHandles=${axisHandleCount}`,
   );
+  const axisHandlesOnTop = await page.locator(".axis-handle").evaluateAll((handles) =>
+    handles.every((handle) => {
+      const rect = handle.getBoundingClientRect();
+      const element = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return element === handle || handle.contains(element);
+    }),
+  );
+  assert(axisHandlesOnTop, "expected widened edge targets not to cover axis resize handles");
   assert(
     protectedIntervalCount >= 2,
     `expected chuck and tailstock protected intervals, got ${protectedIntervalCount}`,
@@ -512,6 +520,24 @@ try {
   assert(
     verticesAfterDelete === verticesBeforeAdd,
     `expected vertex delete to restore count ${verticesBeforeAdd}, got ${verticesAfterDelete}`,
+  );
+  const firstEdgeHandle = page.locator(".edge-add-handle").first();
+  const firstEdgeHandleBox = await firstEdgeHandle.boundingBox();
+  assert(firstEdgeHandleBox !== null, "expected polygon edge add target to be measurable");
+  await page.mouse.dblclick(
+    firstEdgeHandleBox.x + firstEdgeHandleBox.width * 0.25,
+    firstEdgeHandleBox.y + firstEdgeHandleBox.height / 2,
+  );
+  const verticesAfterEdgeDoubleClick = await page.locator(".vertex-handle").count();
+  assert(
+    verticesAfterEdgeDoubleClick === verticesBeforeAdd + 1,
+    `expected edge double-click to add a polygon vertex, got ${verticesAfterEdgeDoubleClick} from ${verticesBeforeAdd}`,
+  );
+  await page.locator(".vertex-handle").first().dblclick();
+  const verticesAfterVertexDoubleClick = await page.locator(".vertex-handle").count();
+  assert(
+    verticesAfterVertexDoubleClick === verticesBeforeAdd,
+    `expected vertex double-click to remove a polygon vertex, got ${verticesAfterVertexDoubleClick} from ${verticesBeforeAdd + 1}`,
   );
   await page.getByTitle("Measure").click();
   await page.locator(".vertex-handle").first().click();
