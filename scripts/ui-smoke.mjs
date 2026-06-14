@@ -247,6 +247,82 @@ try {
   );
   assert((await page.locator(".shaft-axis").count()) === 1, "expected preview to render a central shaft axis");
   assert((await page.locator(".gear-teeth").count()) >= 2, "expected gears to render visible teeth on both sides of the shaft");
+  await page.getByRole("button", { name: "3D model", exact: true }).click();
+  await page.locator("canvas.shaft-3d-canvas[data-renderer='three-webgl']").waitFor();
+  await page.locator(".feature-tree").getByText("20T spur gear").click();
+  await expectInspectorSubtitle("feature.spur_20t");
+  await page.locator("canvas.shaft-3d-canvas[data-selected-object='feature.spur_20t']").waitFor();
+  const model3dStats = await page.locator("canvas.shaft-3d-canvas").evaluate((canvas) => {
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+    if (!gl) {
+      return { hasPixels: false, distinctColors: 0, selectedPixels: 0 };
+    }
+    const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+    gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const colors = new Set();
+    let hasPixels = false;
+    let selectedPixels = 0;
+    for (let index = 0; index < pixels.length; index += 16) {
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      if (r < 245 || g < 245 || b < 245) {
+        hasPixels = true;
+      }
+      if (g > r * 1.1 && g > b * 1.05 && r > 70) {
+        selectedPixels += 1;
+      }
+      colors.add(`${Math.round(r / 16)},${Math.round(g / 16)},${Math.round(b / 16)}`);
+    }
+    return { hasPixels, distinctColors: colors.size, selectedPixels };
+  });
+  assert(model3dStats.hasPixels, "expected 3D WebGL model canvas to render nonblank pixels");
+  assert(
+    model3dStats.distinctColors >= 12,
+    `expected 3D WebGL model to render shaded geometry, got ${model3dStats.distinctColors} color buckets`,
+  );
+  assert(
+    model3dStats.selectedPixels > 100,
+    `expected selected 3D feature highlight pixels, got ${model3dStats.selectedPixels}`,
+  );
+  await page.locator(".feature-tree").getByText("stock.brass_16x100").click();
+  await page.locator("canvas.shaft-3d-canvas[data-selected-object='stock.brass_16x100']").waitFor();
+  const stockSelected3dStats = await page.locator("canvas.shaft-3d-canvas").evaluate((canvas) => {
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+    if (!gl) {
+      return { warmPixels: 0 };
+    }
+    const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+    gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let warmPixels = 0;
+    for (let index = 0; index < pixels.length; index += 16) {
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      if (r > g && g > b && r > 130) {
+        warmPixels += 1;
+      }
+    }
+    return { warmPixels };
+  });
+  assert(
+    stockSelected3dStats.warmPixels > 200,
+    `expected selected 3D stock highlight pixels, got ${stockSelected3dStats.warmPixels}`,
+  );
+  const model3dBox = await page.locator("canvas.shaft-3d-canvas").boundingBox();
+  assert(model3dBox !== null, "expected 3D canvas to be measurable");
+  await page.mouse.click(model3dBox.x + model3dBox.width * 0.5, model3dBox.y + model3dBox.height * 0.5);
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector("canvas.shaft-3d-canvas");
+    return canvas instanceof HTMLCanvasElement && canvas.dataset.selectedObject?.startsWith("feature.");
+  });
+  await page.locator(".feature-tree").getByText("20T spur gear").click();
+  await page.locator("canvas.shaft-3d-canvas[data-selected-object='feature.spur_20t']").waitFor();
+  await page.mouse.move(model3dBox.x + model3dBox.width * 0.5, model3dBox.y + model3dBox.height * 0.5);
+  await page.mouse.wheel(0, -300);
+  await page.locator("canvas.shaft-3d-canvas[data-selected-object='feature.spur_20t']").waitFor();
+  await page.getByRole("button", { name: "2D schematic", exact: true }).click();
+  await page.locator("canvas.planning-webgl-canvas[data-renderer='webgl'][data-grid='dynamic-model-space']").waitFor();
   const canvasStatsBeforePaths = webglStats;
   await ribbon.getByRole("button", { name: "Paths", exact: true }).click();
   await page.locator(".toolpath-summary").getByText("Toolpaths").waitFor();
